@@ -6,7 +6,7 @@
 
 | Problem | Solution | Status |
 |---------|----------|--------|
-| **Liveness Failures** | MoneroVM fraud proofs | ✅ 464 tests |
+| **Liveness Failures** | MoneroVM fraud proofs | ✅ 561 tests |
 | **Light Client** | RandomX verification on-chain | ✅ Fraud proof MVP |
 
 ### Toolchain and running tests
@@ -94,11 +94,11 @@ See [docs/FLOATING_POINT_RESEARCH.md](docs/FLOATING_POINT_RESEARCH.md) for full 
 
 | Tier | Command / step | When |
 |------|-----------------|------|
-| **Fast (default CI)** | `scarb test` | Every PR; 464 tests, ~1–2 min. |
+| **Fast (default CI)** | `scarb test` | Every PR; 561 tests, ~1–2 min. |
 | **Release-grade** | `scarb test` + full FP vector pipeline | Pre-release; run `tools/run_fp_vector_pipeline.sh` (see [FP vectors](#floating-point-test-vectors) below). |
 | **Optional** | OpenCL cross-validation | If you gate a release on external consistency. |
 
-Fast tier green = **464 passed, 0 failed** with `snforge` is the main signal for default CI.
+Fast tier green = **561 passed, 0 failed** with `snforge` is the main signal for default CI.
 
 ## Status
 
@@ -112,6 +112,7 @@ Fast tier green = **464 passed, 0 failed** with `snforge` is the main signal for
 | **Fraud Proof: ISTORE** | ✅ Complete | Struct |
 | **Fraud Proof: FP Stubs** | ✅ Complete | 9 |
 | **Fraud Proof: CBRANCH** | ✅ Complete | 5 |
+| **Fraud Proof: Edge cases (auditor)** | ✅ Complete | 97 |
 | SuperscalarHash execution | ✅ Complete | 78 |
 | Instruction set (14 types) | ✅ Complete | Covered |
 | Cache commitment (Merkle) | ✅ Complete | 19 |

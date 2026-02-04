@@ -179,8 +179,9 @@ These components are production-ready and serve both trustless and attestation p
 | AesGenerator1R | 14 | ✅ Complete |
 | Merkle proof verification | 19 | ✅ Complete |
 | Dataset item generation | 12 | ✅ Mostly complete |
+| Fraud proof + auditor edge cases | 97+ | ✅ test_randomx_edge_cases.cairo (Sections 1–21) |
 
-**Total: 282 tests passing**
+**Full suite: 561 tests passing** (see [SECURITY_AUDIT_NOTES.md](./SECURITY_AUDIT_NOTES.md) for audit test breakdown)
 
 ---
 
