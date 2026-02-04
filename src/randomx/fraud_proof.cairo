@@ -1227,13 +1227,13 @@ pub mod memory_verifiers {
     /// L1 mask: (16384 - 1) & ~7 = 0x3FFF & 0xFFF8 = 0x3FF8
     /// L2 mask: (262144 - 1) & ~7 = 0x3FFFF & 0xFFFF8 = 0x3FFF8  
     /// L3 mask: (2097152 - 1) & ~7 = 0x1FFFFF & 0x1FFFF8 = 0x1FFFF8
-    const SCRATCHPAD_L1_MASK: u64 = 0x3FF8;     // 16 KB - 8, aligned to 8 bytes
-    const SCRATCHPAD_L2_MASK: u64 = 0x3FFF8;    // 256 KB - 8, aligned to 8 bytes
-    const SCRATCHPAD_L3_MASK: u64 = 0x1FFFF8;   // 2 MB - 8, aligned to 8 bytes
+    pub const SCRATCHPAD_L1_MASK: u64 = 0x3FF8;     // 16 KB - 8, aligned to 8 bytes
+    pub const SCRATCHPAD_L2_MASK: u64 = 0x3FFF8;    // 256 KB - 8, aligned to 8 bytes
+    pub const SCRATCHPAD_L3_MASK: u64 = 0x1FFFF8;   // 2 MB - 8, aligned to 8 bytes
     
     /// 64-byte aligned mask for ISTORE with mod_cond >= 14
     /// L3_64 mask: (2097152 - 1) & ~63 = 0x1FFFFF & 0x1FFFC0 = 0x1FFFC0
-    const SCRATCHPAD_L3_MASK_64: u64 = 0x1FFFC0;  // 2 MB - 64, aligned to 64 bytes
+    pub const SCRATCHPAD_L3_MASK_64: u64 = 0x1FFFC0;  // 2 MB - 64, aligned to 64 bytes
     
     /// L1/L2 require 8-byte alignment, L3 for ISTORE requires 64-byte alignment
     const ALIGN_8: u64 = 7;   // ~7 = mask for 8-byte alignment check
