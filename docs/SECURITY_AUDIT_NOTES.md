@@ -5,6 +5,26 @@ for the MoneroVM Cairo implementation.
 
 ## Implementation Status: AUDITOR APPROVED (MVP READY)
 
+> **⚠️ February 2026 External Audit**: A comprehensive security review identified several issues requiring attention before mainnet. See [AUDIT_RESPONSE.md](./AUDIT_RESPONSE.md) for full remediation details.
+
+### February 2026 External Audit Summary
+
+| Finding | Severity | Status |
+|---------|----------|--------|
+| Missing Bond Enforcement (ERC20) | HIGH | Planned Phase 2 |
+| Bisection Logic Simplification | MEDIUM-HIGH | Planned Phase 2 |
+| Incomplete Instruction Verification | MEDIUM | Planned Phase 2 |
+| No Replay Protection | MEDIUM | Planned Phase 2 |
+| **Event Emission Order** | LOW | **FIXED** ✅ |
+| **Opcode Validation Gap (15-17)** | MEDIUM | **FIXED** ✅ |
+| Hardcoded Program Size | LOW | Acknowledged |
+
+**Fixes Applied**:
+1. **Opcode Validation**: Extended valid range to include opcodes 15-17 (IMULH_M, ISMULH_M, IXOR_M)
+2. **Event Order**: Moved `emit(BisectionMove)` after `challenges.write()` for state consistency
+
+### Original Component Status
+
 | Component | Status | Auditor Assessment |
 |-----------|--------|-------------------|
 | ISMULH_R (signed multiply high) | ✅ Complete | "Mathematically sound" |
@@ -29,8 +49,9 @@ for the MoneroVM Cairo implementation.
 | **FPRC Reset Timing** | ✅ Complete | Once per hash (critical fix) |
 | **Iteration End F/E XOR** | ✅ Complete | Spec 4.6.2 step 10 |
 | **FP Stubs** | ✅ Complete | REJECT for testnet safety |
+| **Auditor Edge Case Test File** | ✅ Complete | 97 tests in `test_randomx_edge_cases.cairo` (Sections 1–21) |
 
-**Total: 454 tests passing** (100+ fraud proof tests + 14 challenge contract + FP verifiers + iteration end tests)
+**Total: 561 tests passing** (fraud proof verifiers, challenge contract, FP/ieee754 edge cases, instruction verifiers, cache commitment, CBRANCH, FPRC, witness validation, scratchpad, CFROUND, sign extension, iteration end XOR, and full integration)
 
 ---
 
@@ -291,13 +312,13 @@ pub fn compute_reciprocal(divisor: u32) -> u64 {
 
 **Finding**: Masks must match configuration.h exactly.
 
-**Fix Applied**: Pre-computed masks as constants:
+**Fix Applied**: Pre-computed masks as `pub const` (exposed for auditor edge-case tests):
 
 ```cairo
-const SCRATCHPAD_L1_MASK: u64 = 0x3FF8;     // 16 KB, 8-byte aligned
-const SCRATCHPAD_L2_MASK: u64 = 0x3FFF8;    // 256 KB, 8-byte aligned
-const SCRATCHPAD_L3_MASK: u64 = 0x1FFFF8;   // 2 MB, 8-byte aligned
-const SCRATCHPAD_L3_MASK_64: u64 = 0x1FFFC0; // 2 MB, 64-byte aligned
+pub const SCRATCHPAD_L1_MASK: u64 = 0x3FF8;     // 16 KB, 8-byte aligned
+pub const SCRATCHPAD_L2_MASK: u64 = 0x3FFF8;    // 256 KB, 8-byte aligned
+pub const SCRATCHPAD_L3_MASK: u64 = 0x1FFFF8;   // 2 MB, 8-byte aligned
+pub const SCRATCHPAD_L3_MASK_64: u64 = 0x1FFFC0; // 2 MB, 64-byte aligned
 ```
 
 #### 5. ISTORE Level Selection (VERIFIED)
@@ -1216,7 +1237,38 @@ Added tests for rotation values 0, 32, 62, 63:
 
 **OVERALL: APPROVED FOR TESTNET (91/100 → 95/100 after fixes)**
 
-**Total: 454 tests passing**
+**Total: 561 tests passing** (as of Feb 2026; includes auditor-directed edge case suite below)
+
+---
+
+## Auditor-Directed Edge Case Test Suite (Feb 2026)
+
+The file `tests/test_randomx_edge_cases.cairo` implements a comprehensive edge-case and verifier test suite aligned with auditor requirements. It is the single place for FP verifier, instruction verifier, and spec-boundary tests.
+
+### Sections Implemented
+
+| Section | Topic | Tests | Notes |
+|--------|--------|-------|--------|
+| 1–6 | FTZ/DAZ, FADD/FMUL/FDIV/FSQRT edge cases, E-group constraints | Multiple | IEEE-754 and E-group bit rules |
+| 7 | IMUL_RCP NOP cases | 4+ | imm32=0, power-of-2, reciprocal(3)/(7) |
+| 8 | INEG_R | 4 | -0, -1, INT64_MIN, -(-1) |
+| 9 | NOP instruction | 2 | state unchanged; any change fails |
+| 10 | FSCAL_R | 3 | XOR mask, sign flip, dst must be F-group |
+| 11 | IADD_RS r5 | 2 | r5 adds sign-extended imm32; non-r5 ignores |
+| 12 | FPRC persistence | 3 | Persists across programs; reset only at hash start; 0–3 |
+| 13 | CBRANCH | 4 | All registers modified at CBRANCH; NEVER_MODIFIED sentinel; init_tracker; is_power_of_2 |
+| 14 | Scratchpad masks | 4 | L1/L2/L3/L3_64 constants (pub const) |
+| 15 | ISTORE address from DST | 2 | mod_cond/mod_mem → level; mod_cond≥14 → L3_64 |
+| 16 | Iteration end XOR | 3 | f0 XOR e0; E and A unchanged |
+| 17 | FSCAL_R (extended) | 3 | FSCAL_MASK value, verify_fscal_r, verify_fscal_r_stub |
+| 18 | Witness validation | 5 | GRS max 7, rounding_adj range, FTZ/DAZ=1, FPRC 0–3, default witness |
+| 19 | Sign extension | 3 | sign_extend_32_to_64 positive, negative, -1 |
+| 20 | CFROUND | 3 | basic, rotation, imm32 mod 64 |
+| 21 | Cache commitment | 1+ | verify_cache_lookups_8 requires 8 leaves (length mismatch) |
+
+### Source Changes for Testability
+
+- **Scratchpad masks**: `SCRATCHPAD_L1_MASK`, `SCRATCHPAD_L2_MASK`, `SCRATCHPAD_L3_MASK`, and `SCRATCHPAD_L3_MASK_64` in `memory_verifiers` are now `pub const` so tests can assert exact values (0x3FF8, 0x3FFF8, 0x1FFFF8, 0x1FFFC0).
 
 ---
 
