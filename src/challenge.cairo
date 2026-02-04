@@ -397,17 +397,18 @@ pub mod ChallengeContract {
             }
             
             challenge.last_action_at = timestamp;
-            
-            // Emit event
+
+            // Store updated challenge BEFORE emitting event
+            // Per auditor: emit after write to ensure state consistency
+            self.challenges.write(challenge_id, challenge);
+
+            // Emit event after successful write
             self.emit(BisectionMove {
                 challenge_id,
                 round: new_round,
                 new_left: challenge.bisection.left,
                 new_right: challenge.bisection.right,
             });
-            
-            // Store updated challenge
-            self.challenges.write(challenge_id, challenge);
         }
         
         fn submit_proof(
@@ -601,8 +602,9 @@ pub mod ChallengeContract {
         }
         
         // Verify opcode is in valid range for integer instructions
-        // Valid: 0-14 (integer), 18 (IADD_RS), 29 (NOP), 30 (CBRANCH), 31 (ISTORE)
-        let valid_opcode = proof.opcode <= 14 
+        // Valid: 0-17 (integer + memory), 18 (IADD_RS), 29 (NOP), 30 (CBRANCH), 31 (ISTORE)
+        // Per auditor: 15-17 (IMULH_M, ISMULH_M, IXOR_M) were missing - now included
+        let valid_opcode = proof.opcode <= 17  // 0-17: all integer register + memory ops
             || proof.opcode == 30  // CBRANCH
             || proof.opcode == 31  // ISTORE
             || proof.opcode == 29  // NOP
