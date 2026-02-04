@@ -1,0 +1,16 @@
+[
+  {
+    "name": "pos_zero_plus_neg_zero_round_down",
+    "a": "0x0000000000000000",
+    "b": "0x8000000000000000",
+    "result": "0x8000000000000000",
+    "rounding_mode": 1
+  },
+  {
+    "name": "pos_zero_plus_neg_zero_ties_even",
+    "a": "0x0000000000000000",
+    "b": "0x8000000000000000",
+    "result": "0x0000000000000000",
+    "rounding_mode": 0
+  }
+]
