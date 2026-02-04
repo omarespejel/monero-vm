@@ -5,6 +5,9 @@
 
 use starknet::ContractAddress;
 
+// Re-export IntegerRegisters for InstructionProof struct
+pub use crate::randomx::fraud_proof::IntegerRegisters;
+
 /// Instruction opcodes for RandomX
 /// Reference: https://github.com/tevador/RandomX/blob/master/src/instruction.hpp
 pub mod opcodes {
@@ -131,12 +134,18 @@ pub struct InstructionProof {
     pub dst_idx: u8,
     /// Source register index (0-7)
     pub src_idx: u8,
-    /// Immediate value (for memory instructions)
+    /// Immediate value (for memory instructions, IADD_RS r5)
     pub imm32: u32,
+    /// Shift amount (for IADD_RS)
+    pub shift: u8,
     /// Pre-execution state hash
     pub pre_state_hash: felt252,
     /// Post-execution state hash (claimed)
     pub post_state_hash: felt252,
+    /// Pre-execution integer registers (actual values for verification)
+    pub pre_regs: IntegerRegisters,
+    /// Post-execution integer registers (claimed by prover)
+    pub post_regs: IntegerRegisters,
 }
 
 /// Contract interface
@@ -614,33 +623,93 @@ pub mod ChallengeContract {
             return VerificationResult::InvalidProof;
         }
         
-        // Pre-state and post-state hashes must be different
-        // (unless it's a no-op like ISWAP_R with same src/dst or NOP)
-        if proof.opcode == 9 && proof.dst_idx == proof.src_idx {  // ISWAP_R
-            // No-op case: states should be identical
-            if proof.pre_state_hash == proof.post_state_hash {
-                return VerificationResult::Verified;
-            } else {
-                return VerificationResult::Rejected;
-            }
-        }
+        // Verify instruction execution using actual verifiers from fraud_proof module
+        // Each verifier checks: given pre_regs + instruction, is post_regs correct?
+        // Using crate:: path since we're inside the contract module
         
-        if proof.opcode == 29 {  // NOP
-            // NOP: states should be identical
-            if proof.pre_state_hash == proof.post_state_hash {
-                return VerificationResult::Verified;
-            } else {
-                return VerificationResult::Rejected;
-            }
-        }
-        
-        // For all other instructions, states must be different
-        // (in a full implementation, we'd reconstruct and verify the actual computation)
-        if proof.pre_state_hash != proof.post_state_hash {
+        let is_valid = verify_opcode_execution(proof);
+
+        if is_valid {
             VerificationResult::Verified
         } else {
             VerificationResult::Rejected
         }
+    }
+    
+    /// Dispatch verification to appropriate instruction verifier
+    fn verify_opcode_execution(proof: super::InstructionProof) -> bool {
+        let op = proof.opcode;
+        
+        // Integer register instructions (0-9)
+        if op == 0 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_iadd_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 1 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_isub_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 2 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_imul_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 3 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_imulh_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 4 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_ismulh_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 5 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_imul_rcp(
+                proof.pre_regs, proof.dst_idx, proof.imm32, proof.post_regs);
+        }
+        if op == 6 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_ixor_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 7 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_iror_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 8 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_irol_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        if op == 9 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_iswap_r(
+                proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
+        }
+        // INEG_R = 11
+        if op == 11 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_ineg_r(
+                proof.pre_regs, proof.dst_idx, proof.post_regs);
+        }
+        // Memory instructions (12-17) - require Merkle proofs, not yet integrated
+        // TODO: Integrate memory_verifiers in Phase 2
+        if op >= 12 && op <= 17 {
+            return proof.pre_state_hash != proof.post_state_hash;
+        }
+        // IADD_RS = 18 (uses shift and imm32 for r5)
+        if op == 18 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_iadd_rs(
+                proof.pre_regs, proof.dst_idx, proof.src_idx,
+                proof.shift, proof.imm32, proof.post_regs);
+        }
+        // NOP = 29
+        if op == 29 {
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_nop(
+                proof.pre_regs, proof.post_regs);
+        }
+        // CBRANCH = 30, ISTORE = 31 - require additional state
+        // TODO: Integrate cbranch_verifier and istore verifier in Phase 2
+        if op == 30 || op == 31 {
+            return proof.pre_state_hash != proof.post_state_hash;
+        }
+        
+        // Unknown opcode
+        false
     }
     
     /// Resolve dispute based on verification result
