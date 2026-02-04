@@ -1,0 +1,17 @@
+# Cairo/Scarb
+/target/
+/.scarb_cache/
+/.snfoundry_cache/
+/.bin/
+
+# Generated FP artifacts
+/tools/fp_trace.jsonl
+/test_vectors/
+/tests/test_fp_vectors.cairo
+
+# OS/IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
