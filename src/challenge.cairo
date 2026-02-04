@@ -92,6 +92,14 @@ pub struct BisectionState {
     pub round: u8,
     /// Whose turn to respond (true = challenger, false = defender)
     pub challenger_turn: bool,
+    /// Challenger's claimed midpoint state hash for current round
+    pub challenger_midpoint: felt252,
+    /// Defender's claimed midpoint state hash for current round
+    pub defender_midpoint: felt252,
+    /// Whether challenger has submitted this round
+    pub challenger_submitted: bool,
+    /// Whether defender has submitted this round
+    pub defender_submitted: bool,
 }
 
 /// Challenge data stored on-chain
@@ -321,7 +329,11 @@ pub mod ChallengeContract {
                 left: 0,
                 right: 256,  // 256 instructions per program
                 round: 0,
-                challenger_turn: false,  // Defender responds first
+                challenger_turn: false,  // Both can submit, order doesn't matter
+                challenger_midpoint: 0,
+                defender_midpoint: 0,
+                challenger_submitted: false,
+                defender_submitted: false,
             };
             
             // Create challenge
@@ -392,17 +404,21 @@ pub mod ChallengeContract {
             // Verify challenge is in bisection phase
             assert(challenge.status == ChallengeStatus::Bisecting, 'Not in bisection');
             
-            // Verify it's caller's turn
-            let expected_caller = if challenge.bisection.challenger_turn {
-                challenge.challenger
+            // Identify caller as challenger or defender
+            let is_challenger = caller == challenge.challenger;
+            let is_defender = caller == challenge.defender;
+            assert(is_challenger || is_defender, 'Not a party to challenge');
+            
+            // Check if caller already submitted this round
+            if is_challenger {
+                assert(!challenge.bisection.challenger_submitted, 'Already submitted');
             } else {
-                challenge.defender
-            };
-            assert(caller == expected_caller, 'Not your turn');
+                assert(!challenge.bisection.defender_submitted, 'Already submitted');
+            }
             
             // Verify Merkle proof for midpoint state
             let midpoint = (challenge.bisection.left + challenge.bisection.right) / 2;
-            let trace_root = if challenge.bisection.challenger_turn {
+            let trace_root = if is_challenger {
                 challenge.challenger_trace_root
             } else {
                 challenge.defender_trace_root
@@ -414,33 +430,59 @@ pub mod ChallengeContract {
                 'Invalid Merkle proof'
             );
             
-            // Update bisection bounds based on disagreement
-            // (Simplified: in practice, both parties submit and we find disagreement)
-            let new_round = challenge.bisection.round + 1;
-            
-            // Check if we've reached single instruction
-            if new_round >= constants::MVP_BISECTION_ROUNDS {
-                challenge.status = ChallengeStatus::AwaitingProof;
+            // Store this party's midpoint claim
+            if is_challenger {
+                challenge.bisection.challenger_midpoint = midpoint_state_hash;
+                challenge.bisection.challenger_submitted = true;
             } else {
-                // Update bounds (simplified: bisect left half)
-                challenge.bisection.right = midpoint;
-                challenge.bisection.round = new_round;
-                challenge.bisection.challenger_turn = !challenge.bisection.challenger_turn;
+                challenge.bisection.defender_midpoint = midpoint_state_hash;
+                challenge.bisection.defender_submitted = true;
             }
             
             challenge.last_action_at = timestamp;
-
-            // Store updated challenge BEFORE emitting event
-            // Per auditor: emit after write to ensure state consistency
-            self.challenges.write(challenge_id, challenge);
-
-            // Emit event after successful write
-            self.emit(BisectionMove {
-                challenge_id,
-                round: new_round,
-                new_left: challenge.bisection.left,
-                new_right: challenge.bisection.right,
-            });
+            
+            // Check if both parties have submitted
+            if challenge.bisection.challenger_submitted && challenge.bisection.defender_submitted {
+                // Both submitted - determine disagreement and advance round
+                let new_round = challenge.bisection.round + 1;
+                
+                // Per auditor: proper disagreement detection
+                // If midpoint hashes differ → dispute is in left half (before midpoint)
+                // If midpoint hashes agree → dispute is in right half (after midpoint)
+                if challenge.bisection.challenger_midpoint != challenge.bisection.defender_midpoint {
+                    // Disagree at midpoint → narrow to left half [left, midpoint]
+                    challenge.bisection.right = midpoint;
+                } else {
+                    // Agree at midpoint → narrow to right half [midpoint, right]
+                    challenge.bisection.left = midpoint;
+                }
+                
+                // Reset submission flags for next round
+                challenge.bisection.challenger_submitted = false;
+                challenge.bisection.defender_submitted = false;
+                challenge.bisection.challenger_midpoint = 0;
+                challenge.bisection.defender_midpoint = 0;
+                challenge.bisection.round = new_round;
+                
+                // Check if we've reached single instruction
+                if new_round >= constants::MVP_BISECTION_ROUNDS {
+                    challenge.status = ChallengeStatus::AwaitingProof;
+                }
+                
+                // Store updated challenge BEFORE emitting event
+                self.challenges.write(challenge_id, challenge);
+                
+                // Emit event after successful write
+                self.emit(BisectionMove {
+                    challenge_id,
+                    round: new_round,
+                    new_left: challenge.bisection.left,
+                    new_right: challenge.bisection.right,
+                });
+            } else {
+                // Only one party submitted, waiting for the other
+                self.challenges.write(challenge_id, challenge);
+            }
         }
         
         fn submit_proof(
