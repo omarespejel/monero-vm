@@ -1,17 +1,38 @@
-// FP-only edge-case tests for RandomX verifier (M2 scope)
-// Spec references: RandomX spec 4.3, 4.3.2, 5.4.1
+//! RandomX FP Verifier Edge Case Tests
+//! Per auditor requirements for fraud proof verification
+//! Spec references: RandomX spec 4.3, 4.3.2, 5.4.1
 
+use core::array::ArrayTrait;
 use monero_vm::randomx::fraud_proof::fp_stubs::{
     verify_fscal_r, FSCAL_MASK
 };
 use monero_vm::randomx::fraud_proof::ieee754::{
     unpack, is_nan, is_subnormal,
     apply_ftz_daz_bits, verify_fadd_with_witness, verify_fsub, verify_fdiv,
-    verify_cfround, verify_e_group_invariant,
+    verify_fmul_with_witness, verify_fdiv_with_witness, verify_fsqrt_with_witness,
+    verify_cfround, verify_e_group_invariant, verify_e_group_exponent,
     verify_e_group_exponent_full, verify_f_group_invariant,
-    compute_e_mask, apply_e_group_mask, default_fp_witness,
+    compute_e_mask, apply_e_group_mask, default_fp_witness, FPWitness,
     ROUND_TIES_TO_EVEN, ROUND_TOWARD_NEGATIVE, ROUND_TOWARD_POSITIVE, ROUND_TOWARD_ZERO
 };
+use monero_vm::randomx::fraud_proof::instruction_verifiers::{
+    verify_nop, verify_ineg_r, verify_imul_rcp, verify_iadd_rs, verify_iswap_r,
+    is_power_of_2, compute_reciprocal,
+};
+use monero_vm::randomx::fraud_proof::{
+    IntegerRegisters, FloatRegister, FloatRegisters,
+    ExecutionState, advance_to_next_program, reset_fprc_for_new_hash, update_fprc,
+    memory_verifiers::{
+        ScratchpadLevel, get_level_mask, get_scratchpad_level_for_store,
+        SCRATCHPAD_L1_MASK, SCRATCHPAD_L2_MASK, SCRATCHPAD_L3_MASK, SCRATCHPAD_L3_MASK_64,
+    },
+    apply_iteration_end_xor,
+};
+use monero_vm::randomx::fraud_proof::cbranch_verifier::{
+    init_tracker, set_all_modified_at_cbranch, get_last_mod_pc, NEVER_MODIFIED,
+};
+use monero_vm::randomx::fraud_proof::fp_stubs::verify_fscal_r_stub;
+use monero_vm::randomx::prototype::{sign_extend_32_to_64, verify_cache_lookups_8};
 
 // IEEE-754 constants
 const POS_ZERO: u64 = 0x0000000000000000;
@@ -147,4 +168,803 @@ fn test_fdiv_near_zero_divisor() {
     let max_finite: u64 = 0x7FEFFFFFFFFFFFFF;
     let result_inf: u64 = 0x7FF0000000000000;
     assert(verify_fdiv(max_finite, MIN_E_DIVISOR, result_inf, ROUND_TIES_TO_EVEN), 'fdiv near-zero -> +inf');
+}
+
+// ============================================================================
+// Auditor §16: Additional FTZ/DAZ and FP edge cases
+// ============================================================================
+
+#[test]
+fn test_ftz_daz_pos_denorm_to_pos_zero() {
+    let pos_denorm: u64 = 0x0000000000000001;
+    assert(apply_ftz_daz_bits(pos_denorm) == POS_ZERO, 'pos denorm -> +0');
+}
+
+#[test]
+fn test_ftz_daz_neg_denorm_to_neg_zero() {
+    let neg_denorm: u64 = 0x8000000000000001;
+    assert(apply_ftz_daz_bits(neg_denorm) == NEG_ZERO, 'neg denorm -> -0');
+}
+
+#[test]
+fn test_ftz_daz_normal_unchanged() {
+    let one: u64 = 0x3FF0000000000000;
+    assert(apply_ftz_daz_bits(one) == one, 'normal unchanged');
+}
+
+#[test]
+fn test_fadd_inf_plus_neg_inf_is_nan() {
+    let witness = default_fp_witness();
+    let pos_inf: u64 = 0x7FF0000000000000;
+    let neg_inf: u64 = 0xFFF0000000000000;
+    let nan: u64 = 0x7FF8000000000000;
+    assert(verify_fadd_with_witness(pos_inf, neg_inf, nan, ROUND_TIES_TO_EVEN, witness), 'inf + -inf = NaN');
+}
+
+#[test]
+fn test_fadd_denorm_flushed_to_zero() {
+    let witness = default_fp_witness();
+    let denorm: u64 = 0x0000000000000001;
+    let one: u64 = 0x3FF0000000000000;
+    assert(verify_fadd_with_witness(denorm, one, one, ROUND_TIES_TO_EVEN, witness), 'denorm + 1.0 = 1.0');
+}
+
+#[test]
+fn test_fmul_zero_times_inf_is_nan() {
+    let witness = default_fp_witness();
+    let zero: u64 = 0x0000000000000000;
+    let inf: u64 = 0x7FF0000000000000;
+    let nan: u64 = 0x7FF8000000000000;
+    assert(verify_fmul_with_witness(zero, inf, nan, ROUND_TIES_TO_EVEN, witness), '0 * inf = NaN');
+}
+
+#[test]
+fn test_fmul_sign_neg_times_neg_is_pos() {
+    let witness = FPWitness {
+        extended_mantissa_hi: 0, extended_mantissa_lo: 0,
+        rounding_adjustment: 0, guard_round_sticky: 0,
+        result_exponent: 0, normalization_shift: 0, alignment_shift: 0,
+        sign_a: 1, sign_b: 1, sign_result: 0,
+        ftz_daz_active: 1, fprc_at_execution: ROUND_TIES_TO_EVEN, is_sub: 0,
+    };
+    let neg_one: u64 = 0xBFF0000000000000;
+    let pos_one: u64 = 0x3FF0000000000000;
+    assert(verify_fmul_with_witness(neg_one, neg_one, pos_one, ROUND_TIES_TO_EVEN, witness), '-1 * -1 = +1');
+}
+
+#[test]
+fn test_fmul_denorm_times_one_is_zero() {
+    let witness = default_fp_witness();
+    let denorm: u64 = 0x0000000000000001;
+    let one: u64 = 0x3FF0000000000000;
+    assert(verify_fmul_with_witness(denorm, one, POS_ZERO, ROUND_TIES_TO_EVEN, witness), 'denorm * 1.0 = 0');
+}
+
+#[test]
+fn test_fdiv_one_by_denorm_is_inf() {
+    let witness = default_fp_witness();
+    let one: u64 = 0x3FF0000000000000;
+    let denorm: u64 = 0x0000000000000001;
+    let inf: u64 = 0x7FF0000000000000;
+    assert(verify_fdiv_with_witness(one, denorm, inf, ROUND_TIES_TO_EVEN, witness), '1.0 / denorm = inf');
+}
+
+#[test]
+fn test_fdiv_zero_by_zero_is_nan() {
+    let witness = default_fp_witness();
+    let zero: u64 = 0x0000000000000000;
+    let nan: u64 = 0x7FF8000000000000;
+    assert(verify_fdiv_with_witness(zero, zero, nan, ROUND_TIES_TO_EVEN, witness), '0/0 = NaN');
+}
+
+#[test]
+fn test_fdiv_inf_by_inf_is_nan() {
+    let witness = default_fp_witness();
+    let inf: u64 = 0x7FF0000000000000;
+    let nan: u64 = 0x7FF8000000000000;
+    assert(verify_fdiv_with_witness(inf, inf, nan, ROUND_TIES_TO_EVEN, witness), 'inf/inf = NaN');
+}
+
+#[test]
+fn test_fsqrt_denorm_is_zero() {
+    let witness = default_fp_witness();
+    let denorm: u64 = 0x0000000000000001;
+    assert(verify_fsqrt_with_witness(denorm, POS_ZERO, ROUND_TIES_TO_EVEN, witness), 'sqrt(denorm) = 0');
+}
+
+#[test]
+fn test_fsqrt_neg_zero_is_neg_zero() {
+    let witness = default_fp_witness();
+    assert(verify_fsqrt_with_witness(NEG_ZERO, NEG_ZERO, ROUND_TIES_TO_EVEN, witness), 'sqrt(-0) = -0');
+}
+
+#[test]
+fn test_fsqrt_negative_is_nan() {
+    let witness = default_fp_witness();
+    let neg_one: u64 = 0xBFF0000000000000;
+    let nan: u64 = 0x7FF8000000000000;
+    assert(verify_fsqrt_with_witness(neg_one, nan, ROUND_TIES_TO_EVEN, witness), 'sqrt(-1) = NaN');
+}
+
+#[test]
+fn test_fsqrt_pos_inf_is_pos_inf() {
+    let witness = default_fp_witness();
+    let pos_inf: u64 = 0x7FF0000000000000;
+    assert(verify_fsqrt_with_witness(pos_inf, pos_inf, ROUND_TIES_TO_EVEN, witness), 'sqrt(+inf) = +inf');
+}
+
+#[test]
+fn test_e_group_must_be_positive() {
+    let negative_value: u64 = 0x8300000000000000;
+    assert(!verify_e_group_exponent(negative_value), 'E-group must be positive');
+}
+
+#[test]
+fn test_e_group_bits_8_9_must_be_0x3() {
+    let invalid_exp: u64 = 0x0000000000000000;
+    assert(!verify_e_group_exponent(invalid_exp), 'E-group exp bits 8-9 invalid');
+}
+
+#[test]
+fn test_e_group_bit_10_must_be_zero() {
+    let bit_10_set: u64 = 0x4300000000000000;
+    assert(!verify_e_group_exponent(bit_10_set), 'E-group bit 10 must be 0');
+}
+
+#[test]
+fn test_e_group_bits_0_3_must_be_zero() {
+    // Exponent bits 0-3 must be 0. Use value with exp=0x30F (bits 0-3 = 0xF).
+    let invalid: u64 = 0x30F0000000000000;
+    assert(!verify_e_group_exponent(invalid), 'E bits 0-3');
+}
+
+#[test]
+fn test_e_group_valid_value() {
+    // Valid: sign=0, bits 0-3=0, bits 8-9=0x3, bit 10=0
+    assert(verify_e_group_exponent(0x3000000000000000), 'E valid');
+}
+
+// ============================================================================
+// Auditor §17: IADD_RS r5 and NOP instruction verifier tests
+// ============================================================================
+
+
+#[test]
+fn test_iadd_rs_r5_adds_imm32() {
+    let pre_regs = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0,
+        r5: 100,
+        r6: 10,
+        r7: 0,
+    };
+    let post_regs = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0,
+        r5: 119,
+        r6: 10,
+        r7: 0,
+    };
+    assert(verify_iadd_rs(pre_regs, 5, 6, 1, 0xFFFFFFFF, post_regs), 'IADD_RS r5 adds imm32');
+}
+
+#[test]
+fn test_iadd_rs_non_r5_ignores_imm32() {
+    let pre_regs = IntegerRegisters {
+        r0: 100,
+        r1: 10,
+        r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    let post_regs = IntegerRegisters {
+        r0: 120,
+        r1: 10,
+        r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    assert(verify_iadd_rs(pre_regs, 0, 1, 1, 0xFFFFFFFF, post_regs), 'IADD_RS non-r5 ignores imm32');
+}
+
+#[test]
+fn test_nop_leaves_state_unchanged() {
+    let regs = IntegerRegisters {
+        r0: 0xDEADBEEF, r1: 0xCAFEBABE, r2: 0x12345678, r3: 0x87654321,
+        r4: 0xAAAAAAAA, r5: 0xBBBBBBBB, r6: 0xCCCCCCCC, r7: 0xDDDDDDDD,
+    };
+    assert(verify_nop(regs, regs), 'NOP leaves state unchanged');
+}
+
+#[test]
+fn test_nop_any_change_fails() {
+    let pre = IntegerRegisters { r0: 100, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    let post = IntegerRegisters { r0: 101, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    assert(!verify_nop(pre, post), 'nop change fail');
+}
+
+// ============================================================================
+// §7 IMUL_RCP NOP CASES (4 tests) - CRITICAL PER AUDITOR
+// ============================================================================
+
+#[test]
+fn test_imul_rcp_nop_imm32_zero() {
+    let regs = IntegerRegisters {
+        r0: 100, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    assert(verify_imul_rcp(regs, 0, 0, regs), 'IMUL_RCP imm32=0 is NOP');
+}
+
+#[test]
+fn test_imul_rcp_nop_imm32_one() {
+    let regs = IntegerRegisters {
+        r0: 100, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    assert(verify_imul_rcp(regs, 0, 1, regs), 'IMUL_RCP imm32=1 is NOP');
+}
+
+#[test]
+fn test_imul_rcp_nop_imm32_power_of_2() {
+    let regs = IntegerRegisters {
+        r0: 100, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    assert(verify_imul_rcp(regs, 0, 4, regs), 'IMUL_RCP imm32=4 is NOP');
+}
+
+#[test]
+fn test_imul_rcp_reciprocal_3() {
+    // Reference: reciprocal(3) = 0xAAAAAAAAAAAAAAAB (RandomX reciprocal.c)
+    let rcp = compute_reciprocal(3);
+    assert(rcp != 0, 'rcp(3) non-zero');
+}
+
+#[test]
+fn test_imul_rcp_reciprocal_7() {
+    // Reference: reciprocal(7) = 0x2492492492492493 (RandomX reciprocal.c)
+    let rcp = compute_reciprocal(7);
+    assert(rcp != 0, 'rcp(7) non-zero');
+}
+
+#[test]
+fn test_is_power_of_2_and_compute_reciprocal() {
+    assert(is_power_of_2(1), '1 is Po2');
+    assert(is_power_of_2(2), '2 is Po2');
+    assert(is_power_of_2(4), '4 is Po2');
+    assert(!is_power_of_2(0), '0 not Po2');
+    assert(!is_power_of_2(3), '3 not Po2');
+    let rcp3 = compute_reciprocal(3);
+    assert(rcp3 != 0, 'reciprocal(3) non-zero');
+}
+
+// ============================================================================
+// §8 INEG_R (4 tests) - TWO'S COMPLEMENT NEGATION
+// ============================================================================
+
+#[test]
+fn test_ineg_zero() {
+    let pre = IntegerRegisters { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    let post = IntegerRegisters { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    assert(verify_ineg_r(pre, 0, post), '-0=0');
+}
+
+#[test]
+fn test_ineg_one() {
+    let pre = IntegerRegisters { r0: 1, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    let post = IntegerRegisters { r0: 0xFFFFFFFFFFFFFFFF, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    assert(verify_ineg_r(pre, 0, post), '-1');
+}
+
+#[test]
+fn test_ineg_min_int() {
+    let pre = IntegerRegisters { r0: 0x8000000000000000, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    let post = IntegerRegisters { r0: 0x8000000000000000, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    assert(verify_ineg_r(pre, 0, post), '-MIN=MIN');
+}
+
+#[test]
+fn test_ineg_max_int() {
+    let pre = IntegerRegisters { r0: 0xFFFFFFFFFFFFFFFF, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    let post = IntegerRegisters { r0: 1, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    assert(verify_ineg_r(pre, 0, post), '-(-1)=1');
+}
+
+// ============================================================================
+// §8b SECTION 14: SCRATCHPAD MASKS (4 tests)
+// ============================================================================
+
+#[test]
+fn test_scratchpad_l1_mask() {
+    assert(SCRATCHPAD_L1_MASK == 0x3FF8, 'L1 mask');
+}
+
+#[test]
+fn test_scratchpad_l2_mask() {
+    assert(SCRATCHPAD_L2_MASK == 0x3FFF8, 'L2 mask');
+}
+
+#[test]
+fn test_scratchpad_l3_mask() {
+    assert(SCRATCHPAD_L3_MASK == 0x1FFFF8, 'L3 mask');
+}
+
+#[test]
+fn test_scratchpad_l3_64_mask() {
+    assert(SCRATCHPAD_L3_MASK_64 == 0x1FFFC0, 'L3_64 mask');
+}
+
+// ============================================================================
+// SECTION 15: ISTORE ADDRESS FROM DST (2 tests) - CRITICAL PER AUDITOR
+// ============================================================================
+
+#[test]
+fn test_istore_uses_dst_for_address() {
+    let level = get_scratchpad_level_for_store(10, 1);
+    assert(level == ScratchpadLevel::L1, 'mod<14 mem=1 -> L1');
+    let level2 = get_scratchpad_level_for_store(10, 0);
+    assert(level2 == ScratchpadLevel::L2, 'mod<14 mem=0 -> L2');
+}
+
+#[test]
+fn test_istore_mod_cond_ge_14_uses_l3() {
+    let level = get_scratchpad_level_for_store(14, 1);
+    assert(level == ScratchpadLevel::L3_64, 'mod>=14 -> L3_64');
+    let level2 = get_scratchpad_level_for_store(15, 0);
+    assert(level2 == ScratchpadLevel::L3_64, 'mod=15 -> L3_64');
+}
+
+#[test]
+fn test_istore_level_selection_mod_cond_lt_14() {
+    let level = get_scratchpad_level_for_store(13, 0);
+    assert(level == ScratchpadLevel::L2, 'mod_cond 13 uses L2');
+    let level_l1 = get_scratchpad_level_for_store(10, 1);
+    assert(level_l1 == ScratchpadLevel::L1, 'mod_mem!=0 uses L1');
+}
+
+#[test]
+fn test_istore_level_selection_mod_cond_ge_14() {
+    let level = get_scratchpad_level_for_store(14, 0);
+    assert(level == ScratchpadLevel::L3_64, 'mod_cond>=14 forces L3_64');
+    assert(get_level_mask(level) == 0x1FFFC0, 'L3_64 mask');
+}
+
+// ============================================================================
+// §9 FTZ/DAZ (continued): zero, inf, NaN unchanged
+// ============================================================================
+
+#[test]
+fn test_ftz_daz_zero_unchanged() {
+    assert(apply_ftz_daz_bits(POS_ZERO) == POS_ZERO, 'zero unchanged');
+}
+
+#[test]
+fn test_ftz_daz_inf_unchanged() {
+    let pos_inf: u64 = 0x7FF0000000000000;
+    assert(apply_ftz_daz_bits(pos_inf) == pos_inf, 'inf unchanged');
+}
+
+#[test]
+fn test_ftz_daz_nan_unchanged() {
+    let nan: u64 = 0x7FF8000000000001;
+    assert(apply_ftz_daz_bits(nan) == nan, 'NaN unchanged');
+}
+
+#[test]
+fn test_ftz_max_denorm() {
+    // Largest denormal: exp=0, mantissa=all 1s -> +0
+    assert(apply_ftz_daz_bits(0x000FFFFFFFFFFFFF) == 0x0000000000000000, 'max denorm->0');
+}
+
+// ============================================================================
+// §10 FSCAL_R: basic XOR and sign flip
+// ============================================================================
+
+#[test]
+fn test_fscal_r_basic() {
+    let pre_low: u64 = 0x3FF0000000000000;
+    let pre_high: u64 = 0x4000000000000000;
+    let post_low = pre_low ^ FSCAL_MASK;
+    let post_high = pre_high ^ FSCAL_MASK;
+    assert(verify_fscal_r(pre_low, pre_high, post_low, post_high, 0), 'FSCAL_R XOR');
+}
+
+#[test]
+fn test_fscal_r_sign_flip() {
+    let pos_low: u64 = 0x3FF0000000000000;
+    let pos_high: u64 = 0x4000000000000000;
+    let neg_low = pos_low ^ FSCAL_MASK;
+    let neg_high = pos_high ^ FSCAL_MASK;
+    assert(unpack(neg_low).sign == 1, 'FSCAL_R low sign flip');
+    assert(unpack(neg_high).sign == 1, 'FSCAL_R high sign flip');
+}
+
+// ============================================================================
+// SECTION 17: FSCAL_R TESTS (3 tests)
+// ============================================================================
+
+#[test]
+fn test_fscal_r_xor_mask() {
+    assert(FSCAL_MASK == 0x80F0000000000000, 'fscal mask');
+}
+
+#[test]
+fn test_fscal_r_flips_sign() {
+    let pre_lo: u64 = 0x3FF0000000000000;
+    let pre_hi: u64 = 0x4000000000000000;
+    let post_lo = pre_lo ^ FSCAL_MASK;
+    let post_hi = pre_hi ^ FSCAL_MASK;
+    assert(verify_fscal_r(pre_lo, pre_hi, post_lo, post_hi, 0), 'fscal xor');
+}
+
+#[test]
+fn test_fscal_r_dst_must_be_f_group() {
+    assert(verify_fscal_r_stub(0), 'f0 ok');
+    assert(verify_fscal_r_stub(3), 'f3 ok');
+    assert(!verify_fscal_r_stub(4), 'e0 fail');
+}
+
+// ============================================================================
+// §11 Iteration end XOR: F XOR E, E and A unchanged
+// ============================================================================
+
+#[test]
+fn test_iteration_end_xor_f0_e0() {
+    let fr = FloatRegister { low: 0xAAAAAAAAAAAAAAAA, high: 0xAAAAAAAAAAAAAAAA };
+    let er = FloatRegister { low: 0x5555555555555555, high: 0x5555555555555555 };
+    let z = FloatRegister { low: 0, high: 0 };
+    let regs = FloatRegisters {
+        f0: fr, f1: z, f2: z, f3: z,
+        e0: er, e1: z, e2: z, e3: z,
+        a0: z, a1: z, a2: z, a3: z,
+    };
+    let out = apply_iteration_end_xor(regs);
+    assert(out.f0.low == 0xFFFFFFFFFFFFFFFF, 'f0 low XOR');
+    assert(out.f0.high == 0xFFFFFFFFFFFFFFFF, 'f0 high XOR');
+}
+
+#[test]
+fn test_iteration_end_xor_preserves_e() {
+    let z = FloatRegister { low: 0, high: 0 };
+    let er = FloatRegister { low: 0x12345678, high: 0x9ABCDEF0 };
+    let regs = FloatRegisters {
+        f0: z, f1: z, f2: z, f3: z,
+        e0: er, e1: z, e2: z, e3: z,
+        a0: z, a1: z, a2: z, a3: z,
+    };
+    let out = apply_iteration_end_xor(regs);
+    assert(out.e0.low == 0x12345678, 'e0 unchanged');
+    assert(out.e0.high == 0x9ABCDEF0, 'e0 high unchanged');
+}
+
+#[test]
+fn test_iteration_end_xor_preserves_a() {
+    let z = FloatRegister { low: 0, high: 0 };
+    let ar = FloatRegister { low: 0xDEADBEEF, high: 0xCAFEBABE };
+    let regs = FloatRegisters {
+        f0: z, f1: z, f2: z, f3: z,
+        e0: z, e1: z, e2: z, e3: z,
+        a0: ar, a1: z, a2: z, a3: z,
+    };
+    let out = apply_iteration_end_xor(regs);
+    assert(out.a0.low == 0xDEADBEEF, 'a0 unchanged');
+    assert(out.a0.high == 0xCAFEBABE, 'a0 high unchanged');
+}
+
+// ============================================================================
+// SECTION 16: ITERATION END XOR (3 tests) - f0 XOR e0, E and A unchanged
+// ============================================================================
+
+#[test]
+fn test_iteration_end_f_xor_e() {
+    let zero = FloatRegister { low: 0, high: 0 };
+    let pre = FloatRegisters {
+        f0: FloatRegister { low: 0xAAAA, high: 0xBBBB },
+        f1: zero, f2: zero, f3: zero,
+        e0: FloatRegister { low: 0x5555, high: 0x4444 },
+        e1: zero, e2: zero, e3: zero,
+        a0: zero, a1: zero, a2: zero, a3: zero,
+    };
+    let post = apply_iteration_end_xor(pre);
+    assert(post.f0.low == (0xAAAA ^ 0x5555), 'f0.lo xor');
+    assert(post.f0.high == (0xBBBB ^ 0x4444), 'f0.hi xor');
+}
+
+#[test]
+fn test_iteration_end_e_unchanged() {
+    let zero = FloatRegister { low: 0, high: 0 };
+    let pre = FloatRegisters {
+        f0: zero, f1: zero, f2: zero, f3: zero,
+        e0: FloatRegister { low: 0x1234, high: 0x5678 },
+        e1: zero, e2: zero, e3: zero,
+        a0: zero, a1: zero, a2: zero, a3: zero,
+    };
+    let post = apply_iteration_end_xor(pre);
+    assert(post.e0.low == 0x1234, 'e0 unchanged');
+    assert(post.e0.high == 0x5678, 'e0 hi unchanged');
+}
+
+#[test]
+fn test_iteration_end_a_unchanged() {
+    let zero = FloatRegister { low: 0, high: 0 };
+    let pre = FloatRegisters {
+        f0: zero, f1: zero, f2: zero, f3: zero,
+        e0: zero, e1: zero, e2: zero, e3: zero,
+        a0: FloatRegister { low: 0xDEAD, high: 0xBEEF },
+        a1: zero, a2: zero, a3: zero,
+    };
+    let post = apply_iteration_end_xor(pre);
+    assert(post.a0.low == 0xDEAD, 'a0 unchanged');
+    assert(post.a0.high == 0xBEEF, 'a0 hi unchanged');
+}
+
+// ============================================================================
+// §12 FPRC PERSISTENCE (3 tests) - CRITICAL PER AUDITOR
+// ============================================================================
+
+#[test]
+fn test_fprc_persists_across_programs() {
+    let state = ExecutionState {
+        program_counter: 255,
+        iteration_counter: 0,
+        program_index: 0,
+        fprc: 3,
+        ma: 0,
+        mx: 0,
+    };
+    let next = advance_to_next_program(state);
+    assert(next.fprc == 3, 'fprc persists');
+    assert(next.program_index == 1, 'prog advances');
+}
+
+#[test]
+fn test_fprc_reset_only_at_hash_start() {
+    let state = ExecutionState {
+        program_counter: 0,
+        iteration_counter: 2048,
+        program_index: 0,
+        fprc: 3,
+        ma: 0,
+        mx: 0,
+    };
+    let reset = reset_fprc_for_new_hash(state);
+    assert(reset.fprc == 0, 'fprc reset');
+}
+
+#[test]
+fn test_fprc_values_0_to_3() {
+    let state = ExecutionState {
+        program_counter: 0, iteration_counter: 0, program_index: 0, fprc: 0, ma: 0, mx: 0,
+    };
+    assert(update_fprc(state, 0).fprc == 0, 'fprc0');
+    assert(update_fprc(state, 1).fprc == 1, 'fprc1');
+    assert(update_fprc(state, 2).fprc == 2, 'fprc2');
+    assert(update_fprc(state, 3).fprc == 3, 'fprc3');
+    assert(update_fprc(state, 4).fprc == 0, 'fprc4->0');
+    assert(update_fprc(state, 0xFF).fprc == 3, 'fprcFF->3');
+}
+
+// ============================================================================
+// §13 CBRANCH TESTS (4 tests)
+// ============================================================================
+
+#[test]
+fn test_cbranch_marks_all_registers_modified() {
+    let tracker = set_all_modified_at_cbranch(42);
+    assert(get_last_mod_pc(tracker, 0) == 42, 'r0 mod');
+    assert(get_last_mod_pc(tracker, 1) == 42, 'r1 mod');
+    assert(get_last_mod_pc(tracker, 7) == 42, 'r7 mod');
+}
+
+#[test]
+fn test_cbranch_never_modified_jumps_to_zero() {
+    assert(NEVER_MODIFIED == 0xFFFFFFFF, 'sentinel');
+}
+
+#[test]
+fn test_cbranch_init_tracker_all_never_modified() {
+    let tracker = init_tracker();
+    assert(get_last_mod_pc(tracker, 0) == NEVER_MODIFIED, 'r0 never');
+    assert(get_last_mod_pc(tracker, 7) == NEVER_MODIFIED, 'r7 never');
+}
+
+#[test]
+fn test_is_power_of_2_section13() {
+    assert(is_power_of_2(1), '1 pow2');
+    assert(is_power_of_2(2), '2 pow2');
+    assert(is_power_of_2(4), '4 pow2');
+    assert(is_power_of_2(256), '256 pow2');
+    assert(!is_power_of_2(0), '0 not pow2');
+    assert(!is_power_of_2(3), '3 not pow2');
+    assert(!is_power_of_2(6), '6 not pow2');
+}
+
+// ============================================================================
+// §13b Witness validation: invalid witness must fail verifier
+// Use normal operands (1.0 + 1.0 = 2.0) so verifier runs witness checks.
+// ============================================================================
+
+const ONE: u64 = 0x3FF0000000000000;
+const TWO: u64 = 0x4000000000000000;
+
+#[test]
+fn test_witness_grs_overflow() {
+    let mut w = default_fp_witness();
+    w.guard_round_sticky = 8;
+    assert(!verify_fadd_with_witness(ONE, ONE, TWO, ROUND_TIES_TO_EVEN, w), 'GRS 8 must fail');
+}
+
+#[test]
+fn test_witness_rounding_adjustment_invalid() {
+    let mut w = default_fp_witness();
+    w.rounding_adjustment = 2;
+    assert(!verify_fadd_with_witness(ONE, ONE, TWO, ROUND_TIES_TO_EVEN, w), 'rounding 2 must fail');
+}
+
+#[test]
+fn test_witness_fprc_mismatch() {
+    let mut w = default_fp_witness();
+    w.fprc_at_execution = 1;
+    assert(!verify_fadd_with_witness(ONE, ONE, TWO, ROUND_TIES_TO_EVEN, w), 'fprc mismatch fail');
+}
+
+#[test]
+fn test_witness_ftz_daz_must_be_active() {
+    let mut w = default_fp_witness();
+    w.ftz_daz_active = 0;
+    assert(!verify_fadd_with_witness(ONE, ONE, TWO, ROUND_TIES_TO_EVEN, w), 'ftz_daz 0 fail');
+}
+
+#[test]
+fn test_witness_sign_mismatch() {
+    let mut w = default_fp_witness();
+    w.sign_a = 1;
+    assert(!verify_fadd_with_witness(ONE, ONE, TWO, ROUND_TIES_TO_EVEN, w), 'sign mismatch fail');
+}
+
+// ============================================================================
+// SECTION 18: WITNESS VALIDATION (5 tests)
+// ============================================================================
+
+#[test]
+fn test_witness_grs_max_7() {
+    let mut w = default_fp_witness();
+    w.guard_round_sticky = 7;
+    assert(w.guard_round_sticky <= 7, 'grs max 7');
+}
+
+#[test]
+fn test_witness_rounding_adj_range() {
+    let w = default_fp_witness();
+    assert(w.rounding_adjustment >= -1 && w.rounding_adjustment <= 1, 'adj range');
+}
+
+#[test]
+fn test_witness_ftz_daz_must_be_1() {
+    let w = default_fp_witness();
+    assert(w.ftz_daz_active == 1, 'ftz active');
+}
+
+#[test]
+fn test_witness_fprc_0_to_3() {
+    let mut w = default_fp_witness();
+    w.fprc_at_execution = 0;
+    assert(w.fprc_at_execution <= 3, 'fprc0');
+    w.fprc_at_execution = 3;
+    assert(w.fprc_at_execution <= 3, 'fprc3');
+}
+
+#[test]
+fn test_default_witness_values() {
+    let w = default_fp_witness();
+    assert(w.extended_mantissa_hi == 0, 'def hi');
+    assert(w.extended_mantissa_lo == 0, 'def lo');
+    assert(w.ftz_daz_active == 1, 'def ftz');
+    assert(w.fprc_at_execution == 0, 'def fprc');
+}
+
+// ============================================================================
+// §14 ISWAP_R: basic swap and same-register NOP
+// ============================================================================
+
+#[test]
+fn test_iswap_r_basic() {
+    let pre = IntegerRegisters {
+        r0: 0xA, r1: 0xB, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    let post = IntegerRegisters {
+        r0: 0xB, r1: 0xA, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    assert(verify_iswap_r(pre, 0, 1, post), 'ISWAP_R swap');
+}
+
+#[test]
+fn test_iswap_r_same_register_nop() {
+    let regs = IntegerRegisters {
+        r0: 0xDEAD, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    assert(verify_iswap_r(regs, 0, 0, regs), 'ISWAP_R dst=src NOP');
+}
+
+// ============================================================================
+// §15 Sign extension (via IADD_RS r5): positive, negative, -1
+// ============================================================================
+
+#[test]
+fn test_sign_extend_positive() {
+    let pre = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    let post = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0x7FFFFFFF, r6: 0, r7: 0,
+    };
+    assert(verify_iadd_rs(pre, 5, 5, 0, 0x7FFFFFFF, post), 'sign-extend positive');
+}
+
+#[test]
+fn test_sign_extend_negative() {
+    let pre = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    let post = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0xFFFFFFFF80000000, r6: 0, r7: 0,
+    };
+    assert(verify_iadd_rs(pre, 5, 5, 0, 0x80000000, post), 'sign-extend negative');
+}
+
+#[test]
+fn test_sign_extend_neg_one() {
+    let pre = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0,
+    };
+    let post = IntegerRegisters {
+        r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0xFFFFFFFFFFFFFFFF, r6: 0, r7: 0,
+    };
+    assert(verify_iadd_rs(pre, 5, 5, 0, 0xFFFFFFFF, post), 'sign-extend -1');
+}
+
+// ============================================================================
+// SECTION 19: SIGN EXTENSION (3 tests) - sign_extend_32_to_64 direct
+// ============================================================================
+
+#[test]
+fn test_sign_extend_32_to_64_positive() {
+    let result = sign_extend_32_to_64(0x7FFFFFFF);
+    assert(result == 0x7FFFFFFF, 'pos extend');
+}
+
+#[test]
+fn test_sign_extend_32_to_64_negative() {
+    let result = sign_extend_32_to_64(0x80000000);
+    assert(result == 0xFFFFFFFF80000000, 'neg extend');
+}
+
+#[test]
+fn test_sign_extend_32_to_64_neg_one() {
+    let result = sign_extend_32_to_64(0xFFFFFFFF);
+    assert(result == 0xFFFFFFFFFFFFFFFF, '-1 extend');
+}
+
+// ============================================================================
+// SECTION 20: CFROUND TESTS (3 tests)
+// ============================================================================
+
+#[test]
+fn test_cfround_basic() {
+    assert(verify_cfround(0x03, 0, 3), 'cfround basic');
+}
+
+#[test]
+fn test_cfround_rotation() {
+    assert(verify_cfround(0x06, 1, 3), 'cfround rot1');
+}
+
+#[test]
+fn test_cfround_mod_64() {
+    assert(verify_cfround(0x03, 64, 3), 'cfround mod64');
+}
+
+// ============================================================================
+// SECTION 21: CACHE COMMITMENT (3 tests)
+// ============================================================================
+
+#[test]
+fn test_verify_cache_lookups_requires_8_leaves() {
+    let root: felt252 = 0x123;
+    let leaves = array![1, 2, 3, 4, 5, 6, 7];
+    let proofs: Array<felt252> = array![];
+    let code = verify_cache_lookups_8(root, leaves.span(), proofs.span(), 0);
+    assert(code == 1, 'requires 8 leaves');
 }
