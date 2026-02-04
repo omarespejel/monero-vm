@@ -231,6 +231,9 @@ pub mod ChallengeContract {
         challenges: Map<u64, Challenge>,
         /// Owner address
         owner: ContractAddress,
+        /// Replay protection: maps claim_hash → active challenge_id
+        /// Prevents duplicate challenges on the same claim
+        active_challenges_for_claim: Map<felt252, u64>,
     }
     
     #[event]
@@ -292,6 +295,23 @@ pub mod ChallengeContract {
             let caller = get_caller_address();
             let timestamp = get_block_timestamp();
             
+            // Compute claim hash for replay protection
+            // A claim is uniquely identified by: defender + their claimed hash + trace root
+            let claim_hash = core::poseidon::poseidon_hash_span(
+                array![defender.into(), defender_hash, defender_trace_root].span()
+            );
+            
+            // Check for existing active challenge on this claim
+            let existing_challenge_id = self.active_challenges_for_claim.read(claim_hash);
+            if existing_challenge_id != 0 {
+                let existing = self.challenges.read(existing_challenge_id);
+                // Only block if challenge is still active (Open or Bisecting)
+                let is_active = existing.status == ChallengeStatus::Open 
+                    || existing.status == ChallengeStatus::Bisecting
+                    || existing.status == ChallengeStatus::AwaitingProof;
+                assert(!is_active, 'Claim already being challenged');
+            }
+            
             // Increment challenge counter
             let challenge_id = self.challenge_count.read() + 1;
             self.challenge_count.write(challenge_id);
@@ -323,6 +343,9 @@ pub mod ChallengeContract {
             
             // Store challenge
             self.challenges.write(challenge_id, challenge);
+            
+            // Store replay protection mapping
+            self.active_challenges_for_claim.write(claim_hash, challenge_id);
             
             // Emit event
             self.emit(ChallengeOpened { challenge_id, challenger: caller, defender });
