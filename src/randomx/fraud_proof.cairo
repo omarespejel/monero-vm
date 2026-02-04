@@ -1883,6 +1883,9 @@ pub mod fp_stubs {
         if !FP_STUBS_ACCEPT { return false; }
         dst_idx >= 4 && dst_idx < 8
     }
+
+    /// Explicit marker: FSQRT_R full witness verification is deferred to M3.
+    pub const FSQRT_DEFERRED_TO_M3: bool = true;
     
     /// Verify FSWAP_R stub: REJECTS for testnet safety
     pub fn verify_fswap_r_stub(dst_idx: u8, src_idx: u8) -> bool {
@@ -2660,15 +2663,15 @@ pub mod ieee754 {
     /// F-group invariant: |value| < 3.0e+14 (per auditor Q1)
     /// From spec: f0-f3 values "will not exceed about 3.0e+14"
     /// 
-    /// FIX (per auditor): 3e14 has biased exponent ~1071 (1023 + 48)
-    /// Using <= 1071 to include values up to ~3e14
+    /// Derivation: log2(3e14) ≈ 48, biased exponent = 1023 + 48 = 1071
+    pub const MAX_F_GROUP_EXPONENT: u16 = 1071;
     pub fn verify_f_group_invariant(bits: u64) -> bool {
         // Exponent is bits 52-62: (bits / 2^52) & 0x7FF
         let exp: u64 = (bits / POW2_52) & 0x7FF;
         // Exponent must be:
         // 1. Not Inf/NaN (exp < 0x7FF)
         // 2. Bounded by ~3e14 which has biased exponent 1071
-        exp < 0x7FF && exp <= 1071
+        exp < 0x7FF && exp <= MAX_F_GROUP_EXPONENT.into()
     }
     
     /// Verify FSWAP_R instruction (per auditor Q4)

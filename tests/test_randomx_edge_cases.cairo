@@ -71,6 +71,16 @@ fn test_signed_zero_rounding_fsub() {
 }
 
 #[test]
+fn test_fsub_cancellation_sign() {
+    // 1.0 - 1.0 -> signed zero depends on rounding mode
+    let one: u64 = 0x3FF0000000000000;
+    assert(verify_fsub(one, one, POS_ZERO, ROUND_TIES_TO_EVEN), 'cancel ties-even +0');
+    assert(verify_fsub(one, one, NEG_ZERO, ROUND_TOWARD_NEGATIVE), 'cancel round-down -0');
+    assert(verify_fsub(one, one, POS_ZERO, ROUND_TOWARD_POSITIVE), 'cancel round-up +0');
+    assert(verify_fsub(one, one, POS_ZERO, ROUND_TOWARD_ZERO), 'cancel round-zero +0');
+}
+
+#[test]
 fn test_fprc_transitions_cfround() {
     // CFROUND: fprc = rotr(src, imm) & 0x3
     assert(verify_cfround(0x2, 0, 2), 'fprc=2');
