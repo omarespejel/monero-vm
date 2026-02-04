@@ -9,6 +9,15 @@
 | **Liveness Failures** | MoneroVM fraud proofs | ✅ 464 tests |
 | **Light Client** | RandomX verification on-chain | ✅ Fraud proof MVP |
 
+### Toolchain and running tests
+
+Tests require **Scarb 2.11.4** (Cairo 2.11.4); `snforge_std_deprecated` does not support Scarb 2.12+.
+
+- **Option 1 (pinned binary):**  
+  `./scripts/install_scarb_2.11.4.sh` then `./scripts/run_tests.sh`
+- **Option 2 (mise/asdf):**  
+  Use `.tool-versions` (`scarb 2.11.4`) and run `scarb test` (or `./scripts/run_tests.sh`).
+
 ## Architecture
 
 ```
