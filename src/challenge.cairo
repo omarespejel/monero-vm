@@ -154,6 +154,77 @@ pub struct InstructionProof {
     pub pre_regs: IntegerRegisters,
     /// Post-execution integer registers (claimed by prover)
     pub post_regs: IntegerRegisters,
+    
+    // ========================================================================
+    // Memory instruction fields (opcodes 12-17, 31)
+    // Required for Merkle-verified memory operations
+    // ========================================================================
+    
+    /// Scratchpad Merkle root before instruction execution
+    pub scratchpad_root: felt252,
+    /// Memory witness: value at computed address
+    pub mem_value: u64,
+    /// Memory witness: Merkle proof length
+    pub mem_proof_len: u8,
+    /// Memory witness: Merkle proof siblings (15 elements for 2MB scratchpad)
+    pub mem_proof_0: felt252,
+    pub mem_proof_1: felt252,
+    pub mem_proof_2: felt252,
+    pub mem_proof_3: felt252,
+    pub mem_proof_4: felt252,
+    pub mem_proof_5: felt252,
+    pub mem_proof_6: felt252,
+    pub mem_proof_7: felt252,
+    pub mem_proof_8: felt252,
+    pub mem_proof_9: felt252,
+    pub mem_proof_10: felt252,
+    pub mem_proof_11: felt252,
+    pub mem_proof_12: felt252,
+    pub mem_proof_13: felt252,
+    pub mem_proof_14: felt252,
+    
+    // ========================================================================
+    // ISTORE-specific fields (opcode 31)
+    // ========================================================================
+    
+    /// mod.cond value for scratchpad level selection (also used for CBRANCH)
+    pub mod_cond: u8,
+    /// mod.mem value for L1/L2 selection
+    pub mod_mem: u8,
+    /// Old value at store address (for Merkle proof verification)
+    pub store_old_value: u64,
+    /// Post-execution scratchpad root (after store)
+    pub post_scratchpad_root: felt252,
+    
+    // ========================================================================
+    // CBRANCH-specific fields (opcode 30)
+    // Required for register modification tracking and jump verification
+    // ========================================================================
+    
+    /// Constructed immediate for CBRANCH (signed, from imm32 + condition bits)
+    /// Stored as two u64 values to represent i64: low bits and sign flag
+    pub cimm_low: u64,
+    /// Sign of cimm: 0 = positive, 1 = negative
+    pub cimm_sign: u8,
+    /// PC when destination register was last modified
+    pub last_modified_pc: u32,
+    /// Whether the conditional branch was taken
+    pub jump_taken: bool,
+    /// New program counter after CBRANCH (target if taken, PC+1 if not)
+    pub new_pc: u32,
+    /// Current program counter (before CBRANCH execution)
+    pub current_pc: u32,
+    
+    // Register modification tracker: PC when each register was last modified
+    // Value of 0xFFFFFFFF means "never modified"
+    pub r0_last_mod: u32,
+    pub r1_last_mod: u32,
+    pub r2_last_mod: u32,
+    pub r3_last_mod: u32,
+    pub r4_last_mod: u32,
+    pub r5_last_mod: u32,
+    pub r6_last_mod: u32,
+    pub r7_last_mod: u32,
 }
 
 /// Contract interface
@@ -739,22 +810,42 @@ pub mod ChallengeContract {
         }
         
         // Check if this is a memory instruction (opcodes 12-17)
-        // Per auditor NEW-1: Memory verifier placeholder is exploitable
-        // Handle like FP stubs until Merkle proof integration complete
+        // NOW INTEGRATED: Actually call memory verifiers with Merkle proofs
         if is_memory_instruction(proof.opcode) {
-            return VerificationResult::MemoryVerificationDeferred;
+            let is_valid = verify_memory_opcode_execution(proof);
+            return if is_valid {
+                VerificationResult::Verified
+            } else {
+                VerificationResult::Rejected
+            };
         }
         
-        // Check if this is CBRANCH (30) or ISTORE (31)
-        // Per auditor NEW-2: These also use placeholder verification
-        // Handle like FP stubs until full integration complete
-        if is_control_flow_instruction(proof.opcode) {
-            return VerificationResult::ControlFlowVerificationDeferred;
+        // Check if this is CBRANCH (30)
+        // NOW INTEGRATED: Actually call CBRANCH verifier with register tracking
+        if proof.opcode == 30 {
+            let is_valid = verify_cbranch_execution(proof);
+            return if is_valid {
+                VerificationResult::Verified
+            } else {
+                VerificationResult::Rejected
+            };
+        }
+        
+        // Check if this is ISTORE (31)
+        // NOW INTEGRATED: Actually call ISTORE verifier with Merkle proofs
+        if proof.opcode == 31 {
+            let is_valid = verify_istore_execution(proof);
+            return if is_valid {
+                VerificationResult::Verified
+            } else {
+                VerificationResult::Rejected
+            };
         }
         
         // Verify opcode is in valid range for integer instructions
         // Valid: 0-11 (integer register ops), 18 (IADD_RS), 29 (NOP)
-        // Note: 12-17 (memory), 20-27 (FP), 30-31 (control) handled above
+        // Note: 12-17 (memory), 30 (CBRANCH), and 31 (ISTORE) now verified above
+        // Note: 20-27 (FP) handled above with FPStubRejection
         let valid_opcode = proof.opcode <= 11  // 0-11: integer register ops
             || proof.opcode == 29  // NOP
             || proof.opcode == 18; // IADD_RS
@@ -828,8 +919,7 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_ineg_r(
                 proof.pre_regs, proof.dst_idx, proof.post_regs);
         }
-        // Memory instructions (12-17) - handled earlier via is_memory_instruction()
-        // returns MemoryVerificationDeferred before reaching here
+        // Memory instructions (12-17) - now handled by verify_memory_opcode_execution
         
         // IADD_RS = 18 (uses shift and imm32 for r5)
         if op == 18 {
@@ -842,11 +932,230 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_nop(
                 proof.pre_regs, proof.post_regs);
         }
-        // CBRANCH (30) and ISTORE (31) - handled earlier via is_control_flow_instruction()
-        // returns ControlFlowVerificationDeferred before reaching here
+        // CBRANCH (30) still deferred (requires register modification tracking)
+        // ISTORE (31) now handled by verify_istore_execution
         
         // Unknown opcode - should not reach here if opcode validation is correct
         false
+    }
+    
+    /// Verify memory instruction execution (opcodes 12-17)
+    /// Uses Merkle-verified memory reads
+    fn verify_memory_opcode_execution(proof: super::InstructionProof) -> bool {
+        use crate::randomx::fraud_proof::memory_verifiers::MemoryWitness;
+        use crate::randomx::fraud_proof::{
+            RandomXState, RegisterFile, ExecutionState, FloatRegisters, FloatRegister
+        };
+        
+        // Build MemoryWitness from proof fields
+        let witness = MemoryWitness {
+            value: proof.mem_value,
+            proof_len: proof.mem_proof_len,
+            proof_0: proof.mem_proof_0,
+            proof_1: proof.mem_proof_1,
+            proof_2: proof.mem_proof_2,
+            proof_3: proof.mem_proof_3,
+            proof_4: proof.mem_proof_4,
+            proof_5: proof.mem_proof_5,
+            proof_6: proof.mem_proof_6,
+            proof_7: proof.mem_proof_7,
+            proof_8: proof.mem_proof_8,
+            proof_9: proof.mem_proof_9,
+            proof_10: proof.mem_proof_10,
+            proof_11: proof.mem_proof_11,
+            proof_12: proof.mem_proof_12,
+            proof_13: proof.mem_proof_13,
+            proof_14: proof.mem_proof_14,
+        };
+        
+        // Helper to create zero FloatRegister
+        let zero_freg = FloatRegister { low: 0, high: 0 };
+        
+        // Build minimal RandomXState for memory verification
+        // Only scratchpad_root and int_regs are needed for memory ops
+        let pre_state = RandomXState {
+            registers: RegisterFile {
+                int_regs: proof.pre_regs,
+                float_regs: FloatRegisters {
+                    f0: zero_freg, f1: zero_freg, f2: zero_freg, f3: zero_freg,
+                    e0: zero_freg, e1: zero_freg, e2: zero_freg, e3: zero_freg,
+                    a0: zero_freg, a1: zero_freg, a2: zero_freg, a3: zero_freg,
+                },
+            },
+            execution: ExecutionState {
+                program_counter: 0,
+                iteration_counter: 0,
+                program_index: 0,
+                fprc: 0,
+                ma: 0,
+                mx: 0,
+            },
+            scratchpad_root: proof.scratchpad_root,
+        };
+        
+        let op = proof.opcode;
+        
+        // Dispatch to appropriate memory verifier
+        if op == 12 {
+            return crate::randomx::fraud_proof::memory_verifiers::verify_iadd_m(
+                pre_state, proof.dst_idx, proof.src_idx, proof.imm32, witness, proof.post_regs);
+        }
+        if op == 13 {
+            return crate::randomx::fraud_proof::memory_verifiers::verify_isub_m(
+                pre_state, proof.dst_idx, proof.src_idx, proof.imm32, witness, proof.post_regs);
+        }
+        if op == 14 {
+            return crate::randomx::fraud_proof::memory_verifiers::verify_imul_m(
+                pre_state, proof.dst_idx, proof.src_idx, proof.imm32, witness, proof.post_regs);
+        }
+        if op == 15 {
+            return crate::randomx::fraud_proof::memory_verifiers::verify_imulh_m(
+                pre_state, proof.dst_idx, proof.src_idx, proof.imm32, witness, proof.post_regs);
+        }
+        if op == 16 {
+            return crate::randomx::fraud_proof::memory_verifiers::verify_ismulh_m(
+                pre_state, proof.dst_idx, proof.src_idx, proof.imm32, witness, proof.post_regs);
+        }
+        if op == 17 {
+            return crate::randomx::fraud_proof::memory_verifiers::verify_ixor_m(
+                pre_state, proof.dst_idx, proof.src_idx, proof.imm32, witness, proof.post_regs);
+        }
+        
+        // Should not reach here for memory opcodes
+        false
+    }
+    
+    /// Verify ISTORE execution (opcode 31)
+    /// Uses Merkle-verified memory writes with scratchpad root update
+    fn verify_istore_execution(proof: super::InstructionProof) -> bool {
+        use crate::randomx::fraud_proof::memory_verifiers::StoreWitness;
+        use crate::randomx::fraud_proof::{
+            RandomXState, RegisterFile, ExecutionState, FloatRegisters, FloatRegister
+        };
+        
+        // Build StoreWitness from proof fields
+        let witness = StoreWitness {
+            old_value: proof.store_old_value,
+            new_scratchpad_root: proof.post_scratchpad_root,
+            proof_len: proof.mem_proof_len,
+            proof_0: proof.mem_proof_0,
+            proof_1: proof.mem_proof_1,
+            proof_2: proof.mem_proof_2,
+            proof_3: proof.mem_proof_3,
+            proof_4: proof.mem_proof_4,
+            proof_5: proof.mem_proof_5,
+            proof_6: proof.mem_proof_6,
+            proof_7: proof.mem_proof_7,
+            proof_8: proof.mem_proof_8,
+            proof_9: proof.mem_proof_9,
+            proof_10: proof.mem_proof_10,
+            proof_11: proof.mem_proof_11,
+            proof_12: proof.mem_proof_12,
+            proof_13: proof.mem_proof_13,
+            proof_14: proof.mem_proof_14,
+        };
+        
+        // Helper to create zero FloatRegister
+        let zero_freg = FloatRegister { low: 0, high: 0 };
+        
+        // Build minimal RandomXState for ISTORE verification
+        let pre_state = RandomXState {
+            registers: RegisterFile {
+                int_regs: proof.pre_regs,
+                float_regs: FloatRegisters {
+                    f0: zero_freg, f1: zero_freg, f2: zero_freg, f3: zero_freg,
+                    e0: zero_freg, e1: zero_freg, e2: zero_freg, e3: zero_freg,
+                    a0: zero_freg, a1: zero_freg, a2: zero_freg, a3: zero_freg,
+                },
+            },
+            execution: ExecutionState {
+                program_counter: 0,
+                iteration_counter: 0,
+                program_index: 0,
+                fprc: 0,
+                ma: 0,
+                mx: 0,
+            },
+            scratchpad_root: proof.scratchpad_root,
+        };
+        
+        crate::randomx::fraud_proof::memory_verifiers::verify_istore(
+            pre_state,
+            proof.dst_idx,
+            proof.src_idx,
+            proof.imm32,
+            proof.mod_cond,
+            proof.mod_mem,
+            witness,
+            proof.post_scratchpad_root
+        )
+    }
+    
+    /// Verify CBRANCH execution (opcode 30)
+    /// Uses register modification tracking for jump condition verification
+    fn verify_cbranch_execution(proof: super::InstructionProof) -> bool {
+        use crate::randomx::fraud_proof::cbranch_verifier::{
+            CBranchClaim, RegisterModificationTracker
+        };
+        
+        // Reconstruct cimm (i64) from two-part representation
+        // cimm_low contains the absolute value, cimm_sign indicates negative
+        let cimm: i64 = if proof.cimm_sign == 0 {
+            // Positive: convert u64 to i64 directly (safe for values < 2^63)
+            let val: felt252 = proof.cimm_low.into();
+            val.try_into().unwrap()
+        } else {
+            // Negative: negate the value
+            let val: felt252 = proof.cimm_low.into();
+            let positive: i64 = val.try_into().unwrap();
+            -positive
+        };
+        
+        // Build CBranchClaim from proof fields
+        let claim = CBranchClaim {
+            dst_reg: proof.dst_idx,
+            dst_value_before: get_register_value(proof.pre_regs, proof.dst_idx),
+            cimm: cimm,
+            mod_cond: proof.mod_cond,
+            last_modified_pc: proof.last_modified_pc,
+            jump_taken: proof.jump_taken,
+            new_pc: proof.new_pc,
+        };
+        
+        // Build RegisterModificationTracker from proof fields
+        let tracker = RegisterModificationTracker {
+            r0_last_mod: proof.r0_last_mod,
+            r1_last_mod: proof.r1_last_mod,
+            r2_last_mod: proof.r2_last_mod,
+            r3_last_mod: proof.r3_last_mod,
+            r4_last_mod: proof.r4_last_mod,
+            r5_last_mod: proof.r5_last_mod,
+            r6_last_mod: proof.r6_last_mod,
+            r7_last_mod: proof.r7_last_mod,
+        };
+        
+        crate::randomx::fraud_proof::cbranch_verifier::verify_cbranch(
+            proof.pre_regs,
+            claim,
+            proof.post_regs,
+            tracker,
+            proof.current_pc
+        )
+    }
+    
+    /// Helper to get register value by index
+    fn get_register_value(regs: super::IntegerRegisters, idx: u8) -> u64 {
+        match idx {
+            0 => regs.r0,
+            1 => regs.r1,
+            2 => regs.r2,
+            3 => regs.r3,
+            4 => regs.r4,
+            5 => regs.r5,
+            6 => regs.r6,
+            7 => regs.r7,
+            _ => 0,
+        }
     }
     
     /// Resolve dispute based on verification result
