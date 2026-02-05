@@ -1,6 +1,6 @@
-# Canonical FP Vectors (Audit Baseline)
+# Canonical FP Vectors (Canonical Baseline)
 
-These vectors are a **small, canonical baseline** checked into git for audit reproducibility.
+These vectors are a **small, canonical baseline** checked into git for reproducibility.
 They are **not** the full RandomX trace corpus. Full vectors are generated on demand via
 `tools/run_fp_vector_pipeline.sh` and are intentionally excluded from git due to size.
 

@@ -80,7 +80,7 @@ fn test_reciprocal_vector_3() {
 
 #[test]
 fn test_reciprocal_vector_5() {
-    // From auditor checkpoint
+    // From spec checkpoint
     assert(randomx_reciprocal(5) == 0xCCCCCCCCCCCCCCCC, 'rcp(5)');
 }
 

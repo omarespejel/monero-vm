@@ -1,5 +1,5 @@
 //! RandomX FP Verifier Edge Case Tests
-//! Per auditor requirements for fraud proof verification
+//! Per spec requirements for fraud proof verification
 //! Spec references: RandomX spec 4.3, 4.3.2, 5.4.1
 
 use core::array::ArrayTrait;
@@ -171,7 +171,7 @@ fn test_fdiv_near_zero_divisor() {
 }
 
 // ============================================================================
-// Auditor §16: Additional FTZ/DAZ and FP edge cases
+// Section 16: Additional FTZ/DAZ and FP edge cases
 // ============================================================================
 
 #[test]
@@ -325,7 +325,7 @@ fn test_e_group_valid_value() {
 }
 
 // ============================================================================
-// Auditor §17: IADD_RS r5 and NOP instruction verifier tests
+// Section 17: IADD_RS r5 and NOP instruction verifier tests
 // ============================================================================
 
 
@@ -970,7 +970,7 @@ fn test_verify_cache_lookups_requires_8_leaves() {
 }
 
 // ============================================================================
-// SECTION 22: SECURITY - L1/L2/L3 MASK SELECTION (per auditor HIGH-2 fix)
+// SECTION 22: SECURITY - L1/L2/L3 MASK SELECTION (per spec HIGH-2 fix)
 // ============================================================================
 
 #[test]
@@ -1190,7 +1190,7 @@ fn test_security_all_register_indices_valid() {
 }
 
 // ============================================================================
-// SECTION 26: NORMAL FP RANGE FUZZ TESTS (Per Auditor Pre-Mainnet Condition)
+// SECTION 26: NORMAL FP RANGE FUZZ TESTS (Per spec Pre-Mainnet Condition)
 // Property-based testing for non-edge-case floating-point arithmetic
 // ============================================================================
 

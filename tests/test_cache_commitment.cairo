@@ -400,15 +400,15 @@ fn test_ismulh_official_vector() {
     // dst = 0xBC550E96BA88A72B (signed: -4875573053508671701)
     // src = 0xF5391FA9F18D6273 (signed: -772149058498280845)
     // 
-    // Auditor's expected: 0x02D93EF1269D3EE5 = 205325887223242469
+    // Original expected: 0x02D93EF1269D3EE5 = 205325887223242469
     // Our calculated: 0x02D4F1C50D01F2C9 = 204089831681626953
     //
-    // INVESTIGATION: Python calculation matches our result, not the auditor's:
+    // INVESTIGATION: Python calculation matches our result, not the expected:
     //   a = -4875573053508671701
     //   b = -772149058498280845  
     //   (a * b) >> 64 = 204089831681626953 (0x02D4F1C50D01F2C9)
     //
-    // The auditor's expected value may be incorrect. Our implementation
+    // The expected value may be incorrect. Our implementation
     // matches standard signed multiplication semantics.
     
     let dst_i: i64 = -4875573053508671701;
@@ -468,7 +468,7 @@ fn test_ismulh_max_times_min() {
 }
 
 // Additional test vectors from Hacker's Delight / RISC-V MULH test suites
-// Recommended by security auditor for comprehensive coverage
+// Recommended by security review for comprehensive coverage
 
 #[test]
 fn test_ismulh_max_times_max() {

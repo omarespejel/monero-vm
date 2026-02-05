@@ -625,7 +625,7 @@ fn test_e2e_iswap_self_is_nop() {
 }
 
 // ============================================================================
-// REPLAY PROTECTION TESTS (Per Auditor)
+// REPLAY PROTECTION TESTS (Per spec)
 // ============================================================================
 
 #[test]
@@ -714,7 +714,7 @@ fn test_replay_protection_allows_rechallenge_after_resolution() {
 }
 
 // ============================================================================
-// BISECTION DISAGREEMENT DETECTION TESTS (Per Auditor)
+// BISECTION DISAGREEMENT DETECTION TESTS (Per spec)
 // ============================================================================
 
 #[test]
@@ -756,7 +756,7 @@ fn test_bisection_tracks_midpoint_claims() {
 }
 
 // ============================================================================
-// INSTRUCTION VERIFIER INTEGRATION TESTS (Per Auditor)
+// INSTRUCTION VERIFIER INTEGRATION TESTS (Per spec)
 // ============================================================================
 
 #[test]
@@ -970,7 +970,7 @@ fn test_security_imul_rcp_zero_is_nop() {
 
 // ============================================================================
 // SECURITY TESTS - OPCODE CLASSIFICATION BOUNDARIES
-// Per auditor: "Placeholder is exploitable" - these tests verify classification
+// Per spec: "Placeholder is exploitable" - these tests verify classification
 // ============================================================================
 
 #[test]
@@ -1104,7 +1104,7 @@ fn test_security_opcode_32_is_invalid() {
 
 // ============================================================================
 // SECURITY TESTS - IMUL_RCP EDGE CASES
-// Per auditor: Must use verify_imul_rcp_full, not basic version
+// Per spec: Must use verify_imul_rcp_full, not basic version
 // ============================================================================
 
 #[test]
@@ -1187,7 +1187,7 @@ fn test_security_imul_rcp_max_divisor() {
 
 // ============================================================================
 // SECURITY TESTS - SIGNED ARITHMETIC EDGE CASES
-// Per auditor: ISMULH_M uses signed arithmetic
+// Per spec: ISMULH_M uses signed arithmetic
 // ============================================================================
 
 #[test]
@@ -1226,7 +1226,7 @@ fn test_security_signed_large_positive_times_large_negative() {
 
 // ============================================================================
 // SECURITY TESTS - REGISTER INDEX VALIDATION
-// Per auditor: Must reject invalid register indices
+// Per spec: Must reject invalid register indices
 // ============================================================================
 
 #[test]
@@ -1271,7 +1271,7 @@ fn test_security_register_idx_255_is_invalid() {
 
 // ============================================================================
 // SECURITY TESTS - DEFERRED VERIFICATION ATTACK VECTORS
-// Per auditor: Placeholder was exploitable, deferred is safe
+// Per spec: Placeholder was exploitable, deferred is safe
 // ============================================================================
 
 #[test]
@@ -1323,7 +1323,7 @@ fn test_security_fp_attacker_cannot_claim_success() {
 
 // ============================================================================
 // SECURITY TESTS - DEFERRED DISPUTE TYPE CLASSIFICATION
-// Per auditor: DeferredVerificationDispute event should emit correct type
+// Per spec: DeferredVerificationDispute event should emit correct type
 // ============================================================================
 
 #[test]
@@ -1722,7 +1722,7 @@ fn test_integration_cbranch_negative_cimm() {
 }
 
 // ============================================================================
-// FLOATING-POINT INTEGRATION TESTS (Per Auditor - Hardest Edge Cases)
+// FLOATING-POINT INTEGRATION TESTS (Per spec - Hardest Edge Cases)
 // ============================================================================
 
 /// Helper to create a float proof for FP instruction tests

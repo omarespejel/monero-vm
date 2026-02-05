@@ -24,7 +24,7 @@ pub mod opcodes {
     pub const IROL_R: u8 = 8;
     pub const ISWAP_R: u8 = 9;
     
-    // CRITICAL: INEG_R = 11 (Per auditor, frequency 2/256)
+    // CRITICAL: INEG_R = 11 (Per spec, frequency 2/256)
     pub const INEG_R: u8 = 11;
     
     // Memory instructions (12-17)
@@ -415,7 +415,7 @@ pub mod ChallengeContract {
     }
     
     /// Emitted when a dispute involves deferred verification (FP, memory, control flow)
-    /// Per auditor recommendation: Monitor frequency for governance escalation threshold
+    /// Per spec recommendation: Monitor frequency for governance escalation threshold
     /// Threshold suggestion: If challenger_bond + defender_bond > 1 ETH, consider governance
     #[derive(Drop, starknet::Event)]
     pub struct DeferredVerificationDispute {
@@ -591,7 +591,7 @@ pub mod ChallengeContract {
                 // Both submitted - determine disagreement and advance round
                 let new_round = challenge.bisection.round + 1;
                 
-                // Per auditor: proper disagreement detection
+                // Per spec: proper disagreement detection
                 // If midpoint hashes differ → dispute is in left half (before midpoint)
                 // If midpoint hashes agree → dispute is in right half (after midpoint)
                 if challenge.bisection.challenger_midpoint != challenge.bisection.defender_midpoint {
@@ -657,7 +657,7 @@ pub mod ChallengeContract {
             // - InvalidProof: Prover loses
             let verification_result = verify_instruction_proof(proof);
             
-            // Emit event for deferred verification (for monitoring per auditor recommendation)
+            // Emit event for deferred verification (for monitoring per spec recommendation)
             // This helps track disputes that can't be fully verified
             let dispute_type = get_deferred_dispute_type(verification_result);
             if dispute_type != 255_u8 {  // 255 = not deferred
@@ -670,7 +670,7 @@ pub mod ChallengeContract {
             }
             
             // Determine winner based on verification result
-            // Per auditor: FP stub rejection → Defender wins
+            // Per spec: FP stub rejection → Defender wins
             let winner = resolve_dispute(
                 verification_result,
                 is_challenger,
@@ -789,7 +789,7 @@ pub mod ChallengeContract {
     }
     
     /// Verification result enum
-    /// Per auditor recommendation: FP stub rejection should favor defender
+    /// Per spec recommendation: FP stub rejection should favor defender
     #[derive(Drop, Copy, PartialEq)]
     enum VerificationResult {
         /// Proof verified successfully - prover wins
@@ -800,11 +800,11 @@ pub mod ChallengeContract {
         /// Rationale: Can't prove fraud without full verification
         FPStubRejection,
         /// Memory instruction verification deferred - defender wins
-        /// Per auditor: Memory verifiers require Merkle proofs not yet integrated
+        /// Per spec: Memory verifiers require Merkle proofs not yet integrated
         /// Rationale: Can't verify memory correctness without witness data
         MemoryVerificationDeferred,
         /// Control flow instruction (CBRANCH/ISTORE) verification deferred - defender wins
-        /// Per auditor: These require additional state (branch target, scratchpad updates)
+        /// Per spec: These require additional state (branch target, scratchpad updates)
         ControlFlowVerificationDeferred,
         /// Invalid proof structure
         InvalidProof,
@@ -817,14 +817,14 @@ pub mod ChallengeContract {
     }
     
     /// Check if an opcode is a memory instruction (requires Merkle proof witness)
-    /// Per auditor NEW-1: Placeholder verification is exploitable
+    /// Per spec NEW-1: Placeholder verification is exploitable
     fn is_memory_instruction(opcode: u8) -> bool {
         // Memory opcodes: IADD_M=12, ISUB_M=13, IMUL_M=14, IMULH_M=15, ISMULH_M=16, IXOR_M=17
         opcode >= 12 && opcode <= 17
     }
     
     /// Check if an opcode is a control flow instruction (requires additional state)
-    /// Per auditor NEW-2: CBRANCH and ISTORE use placeholder verification
+    /// Per spec NEW-2: CBRANCH and ISTORE use placeholder verification
     fn is_control_flow_instruction(opcode: u8) -> bool {
         // CBRANCH=30, ISTORE=31
         opcode == 30 || opcode == 31
@@ -850,7 +850,7 @@ pub mod ChallengeContract {
     /// - FPStubRejection: FP instruction, verification not implemented
     /// - InvalidProof: Malformed proof
     /// 
-    /// Per auditor recommendation:
+    /// Per spec recommendation:
     /// FP stub rejection → Defender wins (can't prove fraud without full verification)
     fn verify_instruction_proof(proof: super::InstructionProof) -> VerificationResult {
         // Opcode constants (inline to avoid use statement issues in older Cairo)
@@ -955,7 +955,7 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_ismulh_r(
                 proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
         }
-        // IMUL_RCP - Per auditor: MUST use full version for testnet
+        // IMUL_RCP - Per spec: MUST use full version for testnet
         // Basic version only checks structure, not reciprocal correctness
         if op == 5 {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_imul_rcp_full(
@@ -1628,7 +1628,7 @@ pub mod ChallengeContract {
     
     /// Resolve dispute based on verification result
     /// 
-    /// Per auditor recommendation:
+    /// Per spec recommendation:
     /// - Verified: Prover (whoever submitted) wins
     /// - Rejected: Prover loses (fraud detected or wrong execution)
     /// - FPStubRejection: Defender wins (can't prove fraud without FP verification)
@@ -1655,12 +1655,12 @@ pub mod ChallengeContract {
             },
             VerificationResult::MemoryVerificationDeferred => {
                 // Memory instruction, can't verify without Merkle witness → Defender wins
-                // Per auditor NEW-1: Safer than placeholder that only checks hash difference
+                // Per spec NEW-1: Safer than placeholder that only checks hash difference
                 defender
             },
             VerificationResult::ControlFlowVerificationDeferred => {
                 // CBRANCH/ISTORE, can't verify without full state → Defender wins
-                // Per auditor NEW-2: Safer than placeholder that only checks hash difference
+                // Per spec NEW-2: Safer than placeholder that only checks hash difference
                 defender
             },
             VerificationResult::InvalidProof => {

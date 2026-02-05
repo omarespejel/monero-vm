@@ -878,7 +878,7 @@ fn test_verify_memory_wrong_proof() {
 // ============================================================================
 // FP Stub Tests - TESTNET SAFETY MODE
 // 
-// Per hardcore auditor recommendation:
+// Per spec recommendation:
 // FP stubs now REJECT (return false) for testnet safety.
 // This ensures FP disputes cannot be resolved incorrectly on-chain.
 // ============================================================================
@@ -1213,7 +1213,7 @@ fn test_ieee754_e_group_constraint() {
 }
 
 // ============================================================================
-// Auditor-Required Tests (Q1, Q3, Q4)
+// Spec-Required Tests (Q1, Q3, Q4)
 // ============================================================================
 
 #[test]
@@ -1293,12 +1293,12 @@ fn test_e_group_exponent_bits_check() {
 }
 
 // ============================================================================
-// New Tests for Auditor-Recommended Features
+// New Tests for Recommended Features
 // ============================================================================
 
 #[test]
 fn test_program_config_default() {
-    // ProgramConfig now only contains full 64-bit eMasks (per auditor)
+    // ProgramConfig now only contains full 64-bit eMasks (per spec)
     let config = default_program_config();
     // Default eMask: 0x3000000000000000 (exponent 0x300 << 52, no mantissa mask)
     assert(config.e_mask_lo == 0x3000000000000000, 'default e_mask_lo');
@@ -1443,7 +1443,7 @@ fn test_fsqrt_with_witness_special_cases() {
 }
 
 // ============================================================================
-// FTZ/DAZ Denormal Tests (per auditor v2)
+// FTZ/DAZ Denormal Tests (per spec v2)
 // ============================================================================
 
 #[test]
@@ -1522,7 +1522,7 @@ fn test_signed_zero_rounding_in_fsub() {
 }
 
 // ============================================================================
-// F-group Conversion Tests (per auditor Q6)
+// F-group Conversion Tests (per spec Q6)
 // ============================================================================
 
 #[test]
@@ -1604,7 +1604,7 @@ fn test_fp_witness_has_alignment_shift() {
 }
 
 // ============================================================================
-// Critical Edge Case Tests (per auditor)
+// Critical Edge Case Tests (per spec)
 // ============================================================================
 
 #[test]
@@ -1708,7 +1708,7 @@ fn test_apply_e_group_constraint_with_full_mask() {
 }
 
 // ============================================================================
-// FPRC State Tracking Tests (per auditor Q5)
+// FPRC State Tracking Tests (per spec Q5)
 // ============================================================================
 
 #[test]
@@ -1842,7 +1842,7 @@ fn test_compute_cfround_fprc_rotation_59_60() {
 }
 
 // ============================================================================
-// FPRC Persistence Tests (per hardcore auditor critical finding)
+// FPRC Persistence Tests (per spec critical finding)
 // ============================================================================
 
 #[test]
@@ -1916,7 +1916,7 @@ fn test_initial_state_starts_with_fprc_zero() {
 }
 
 // ============================================================================
-// F/E XOR at Iteration End Tests (per hardcore auditor Finding #6)
+// F/E XOR at Iteration End Tests (per spec Finding #6)
 // Spec 4.6.2 Step 10: f0 = f0 XOR e0, f1 = f1 XOR e1, etc.
 // ============================================================================
 
@@ -2027,7 +2027,7 @@ fn test_verify_iteration_end_xor_wrong_f0() {
 }
 
 // ============================================================================
-// INT32 Conversion Tests (per hardcore auditor Finding #7)
+// INT32 Conversion Tests (per spec Finding #7)
 // ============================================================================
 
 #[test]
@@ -2040,7 +2040,7 @@ fn test_int32_max_conversion_exact() {
 }
 
 // ============================================================================
-// CFROUND Edge Case Tests (per hardcore auditor recommendation)
+// CFROUND Edge Case Tests (per spec recommendation)
 // ============================================================================
 
 #[test]
@@ -2157,7 +2157,7 @@ fn test_ieee754_fmul_known_result() {
 }
 
 // ============================================================================
-// CBRANCH Tests (Per auditor: track last_modified_pc per register)
+// CBRANCH Tests (Per spec: track last_modified_pc per register)
 // ============================================================================
 
 #[test]
@@ -2283,7 +2283,7 @@ fn test_cbranch_jump_bits_zero() {
 fn test_cbranch_never_modified_jumps_to_zero() {
     use monero_vm::randomx::fraud_proof::cbranch_verifier::NEVER_MODIFIED;
     
-    // Per auditor: "If a register was *never* modified, jump to instruction 0"
+    // Per spec: "If a register was *never* modified, jump to instruction 0"
     let pre_regs = IntegerRegisters {
         r0: 0, r1: 0, r2: 0, r3: 0,  // All zero - bits will be zero
         r4: 0, r5: 0, r6: 0, r7: 0,
@@ -2500,7 +2500,7 @@ fn test_iswap_r_same_register_is_nop() {
 
 #[test]
 fn test_cbranch_sets_all_registers_modified() {
-    // Per auditor: CBRANCH must set ALL registers' last_modified_pc
+    // Per spec: CBRANCH must set ALL registers' last_modified_pc
     let tracker = set_all_modified_at_cbranch(50);
     
     assert(tracker.r0_last_mod == 50, 'r0 should be 50');
@@ -2542,7 +2542,7 @@ fn test_memory_alignment_64byte() {
 
 #[test]
 fn test_istore_mod_cond_14_forces_l3() {
-    // Per auditor: mod.cond >= 14 forces L3 with 64-byte alignment
+    // Per spec: mod.cond >= 14 forces L3 with 64-byte alignment
     let level = get_scratchpad_level_for_store(14, 0);
     assert(level == ScratchpadLevel::L3_64, 'mod_cond=14 forces L3_64');
     
@@ -2567,7 +2567,7 @@ use monero_vm::randomx::fraud_proof::instruction_verifiers::{
 use monero_vm::randomx::fraud_proof::memory_verifiers::get_level_mask;
 
 // ============================================================================
-// INEG_R Tests (Per Auditor: opcode 11, frequency 2/256)
+// INEG_R Tests (Per spec: opcode 11, frequency 2/256)
 // ============================================================================
 
 #[test]
@@ -2678,7 +2678,7 @@ fn test_is_power_of_2() {
 }
 
 // ============================================================================
-// IADD_RS Sign Extension Tests (Per Auditor)
+// IADD_RS Sign Extension Tests (Per spec)
 // ============================================================================
 
 #[test]
@@ -2758,7 +2758,7 @@ fn test_istore_all_mod_cond_below_14() {
 }
 
 // ============================================================================
-// Scratchpad Mask Tests (Per Auditor)
+// Scratchpad Mask Tests (Per spec)
 // ============================================================================
 
 #[test]

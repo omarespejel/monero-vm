@@ -8,7 +8,7 @@
 // 2. Port occupation tracking per cycle
 // 3. Instruction retirement timing
 //
-// Port scheduling priority: P5 → P0 → P1 (from auditor)
+// Port scheduling priority: P5 → P0 → P1 (from spec)
 
 use monero_vm::randomx::port_scheduler::{
     port_scheduler_new, port_scheduler_is_port_free,

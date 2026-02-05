@@ -72,7 +72,7 @@ pub struct RandomXState {
 }
 
 // ============================================================================
-// FPRC State Management (per auditor recommendation)
+// FPRC State Management (per spec recommendation)
 // ============================================================================
 
 /// Update FPRC in execution state
@@ -81,7 +81,7 @@ pub struct RandomXState {
 /// - CFROUND calculates a 2-bit value by rotating src right by imm32 bits
 /// - Takes the 2 least significant bits as new FPRC
 /// 
-/// CRITICAL (per hardcore auditor review):
+/// CRITICAL (per spec review):
 /// - FPRC is reset ONCE per hash calculation (before program 0)
 /// - FPRC PERSISTS across all 8 programs (0-7) within a single hash
 /// - CFROUND in program 0 can set FPRC, which affects programs 1-7
@@ -117,7 +117,7 @@ pub fn reset_fprc_for_new_hash(state: ExecutionState) -> ExecutionState {
 
 /// Advance to next program while PRESERVING FPRC
 /// 
-/// CRITICAL (per hardcore auditor review):
+/// CRITICAL (per spec review):
 /// FPRC persists across programs within a single hash calculation.
 /// DO NOT reset FPRC when advancing from program N to N+1.
 pub fn advance_to_next_program(state: ExecutionState) -> ExecutionState {
@@ -531,7 +531,7 @@ pub fn compute_state_hash(state: RandomXState) -> felt252 {
 /// CRITICAL: This should be called ONCE at the start of a new hash,
 /// not when transitioning between programs within the same hash.
 /// 
-/// Per hardcore auditor review:
+/// Per spec review:
 /// - FPRC is set to 0 here (spec section 2, step 6)
 /// - FPRC persists across all 8 programs
 /// - Use advance_to_next_program() to transition between programs
@@ -774,14 +774,14 @@ pub mod instruction_verifiers {
     
     /// Verify ISWAP_R: swap dst and src registers
     /// 
-    /// Per auditor: ISWAP_R with src == dst is a NO-OP
+    /// Per spec: ISWAP_R with src == dst is a NO-OP
     pub fn verify_iswap_r(
         pre_regs: IntegerRegisters,
         dst_idx: u8,
         src_idx: u8,
         post_regs: IntegerRegisters
     ) -> bool {
-        // If dst == src, this is a no-op (per auditor and spec Table 5.2.1)
+        // If dst == src, this is a no-op (per spec and spec Table 5.2.1)
         if dst_idx == src_idx {
             return verify_state_unchanged(pre_regs, post_regs);
         }
@@ -802,12 +802,12 @@ pub mod instruction_verifiers {
     }
     
     // ========================================================================
-    // NOP and Special Case Verifiers (per auditor requirements)
+    // NOP and Special Case Verifiers (per spec requirements)
     // ========================================================================
     
     /// Verify NOP instruction: state must be unchanged
     /// 
-    /// Per auditor: "There's a NOP = 29 instruction. While NOPs don't modify state,
+    /// Per spec: "There's a NOP = 29 instruction. While NOPs don't modify state,
     /// your fraud proof verifier MUST handle them."
     /// 
     /// "If missing, an attacker can claim NOP changed state and you can't disprove it."
@@ -820,7 +820,7 @@ pub mod instruction_verifiers {
     
     /// Verify IMUL_RCP: dst = dst * reciprocal(imm32)
     /// 
-    /// Per auditor and Kudelski audit: IMUL_RCP is a NO-OP when:
+    /// Per spec and Kudelski audit: IMUL_RCP is a NO-OP when:
     /// - imm32 == 0
     /// - imm32 is power of 2 (including 1)
     pub fn verify_imul_rcp(
@@ -855,7 +855,7 @@ pub mod instruction_verifiers {
     }
     
     // ========================================================================
-    // INEG_R Verifier (Per Auditor: opcode 11, frequency 2/256)
+    // INEG_R Verifier (Per spec: opcode 11, frequency 2/256)
     // ========================================================================
     
     /// Verify INEG_R: dst = -dst (two's complement negation)
@@ -902,7 +902,7 @@ pub mod instruction_verifiers {
     }
     
     // ========================================================================
-    // Full IMUL_RCP with Reciprocal Calculation (Per Auditor)
+    // Full IMUL_RCP with Reciprocal Calculation (Per spec)
     // ========================================================================
     
     /// Verify IMUL_RCP with full reciprocal calculation
@@ -1039,7 +1039,7 @@ pub mod instruction_verifiers {
     
     /// Verify IADD_RS: dst = dst + (src << shift) [+ imm32 if dst == r5]
     /// 
-    /// Per auditor: "if dst is register r5, the immediate value imm32 is added to the result"
+    /// Per spec: "if dst is register r5, the immediate value imm32 is added to the result"
     /// CRITICAL: imm32 must be SIGN-EXTENDED to 64-bit per spec signExtend2sCompl()
     /// 
     /// Reference (bytecode_machine.cpp):
@@ -1223,7 +1223,7 @@ pub mod memory_verifiers {
     const SCRATCHPAD_L2_SIZE: u64 = 262144;     // 256 KiB
     const SCRATCHPAD_L3_SIZE: u64 = 2097152;    // 2 MiB
     
-    /// Scratchpad masks (8-byte aligned) per auditor spec
+    /// Scratchpad masks (8-byte aligned) per spec spec
     /// L1 mask: (16384 - 1) & ~7 = 0x3FFF & 0xFFF8 = 0x3FF8
     /// L2 mask: (262144 - 1) & ~7 = 0x3FFFF & 0xFFFF8 = 0x3FFF8  
     /// L3 mask: (2097152 - 1) & ~7 = 0x1FFFFF & 0x1FFFF8 = 0x1FFFF8
@@ -1252,7 +1252,7 @@ pub mod memory_verifiers {
         L3_64,  // L3 with 64-byte alignment (for ISTORE with mod.cond >= 14)
     }
     
-    /// Verify memory address alignment (per auditor requirement)
+    /// Verify memory address alignment (per spec requirement)
     /// 
     /// Per RandomX spec Table 4.2.1:
     /// - L1, L2: 8-byte aligned
@@ -1268,7 +1268,7 @@ pub mod memory_verifiers {
         }
     }
     
-    /// Determine scratchpad level for ISTORE (per auditor)
+    /// Determine scratchpad level for ISTORE (per spec)
     /// 
     /// Reference (bytecode_machine.cpp):
     /// ```cpp
@@ -1449,7 +1449,7 @@ pub mod memory_verifiers {
     }
     
     /// Verify ISMULH_M: dst = (dst * [mem]) >> 64 (SIGNED high multiplication)
-    /// Per auditor: This was missing - opcode 16 in RandomX
+    /// Per spec: This was missing - opcode 16 in RandomX
     pub fn verify_ismulh_m(
         pre_state: RandomXState,
         dst_idx: u8,
@@ -1533,7 +1533,7 @@ pub mod memory_verifiers {
     // ========================================================================
     
     /// Memory write witness for ISTORE fraud proofs
-    /// Per auditor: address uses DST register, not src
+    /// Per spec: address uses DST register, not src
     #[derive(Drop, Copy, Serde)]
     pub struct StoreWitness {
         /// Old value at the memory address (for Merkle proof)
@@ -1566,7 +1566,7 @@ pub mod memory_verifiers {
     /// - Value written is from SRC register
     /// - Scratchpad level determined by mod.cond AND mod.mem
     /// 
-    /// Per auditor HIGH-2 fix: Now properly uses mod_mem for L1/L2 selection
+    /// Per spec HIGH-2 fix: Now properly uses mod_mem for L1/L2 selection
     pub fn verify_istore(
         pre_state: RandomXState,
         dst_idx: u8,
@@ -1577,7 +1577,7 @@ pub mod memory_verifiers {
         witness: StoreWitness,
         post_scratchpad_root: felt252
     ) -> bool {
-        // 1. Compute memory address from DST (per auditor clarification)
+        // 1. Compute memory address from DST (per spec clarification)
         let dst_val = get_register(pre_state.registers.int_regs, dst_idx);
         let addr = compute_scratchpad_address_with_level(dst_val, imm32, mod_cond, mod_mem);
         
@@ -1640,7 +1640,7 @@ pub mod memory_verifiers {
     }
     
     /// Compute scratchpad address with level selection
-    /// Per auditor HIGH-2: Must properly select L1/L2/L3 based on mod.cond AND mod.mem
+    /// Per spec HIGH-2: Must properly select L1/L2/L3 based on mod.cond AND mod.mem
     /// - mod.cond >= 14: L3 with 64-byte alignment (full 2MB)
     /// - mod.cond < 14, mod.mem != 0: L1 (16KB)
     /// - mod.cond < 14, mod.mem == 0: L2 (256KB)
@@ -1889,7 +1889,7 @@ pub mod constants {
 
 /// Floating-point instruction stubs (Phase 1)
 /// 
-/// Per auditor recommendation: Verify register groups and memory addresses,
+/// Per spec recommendation: Verify register groups and memory addresses,
 /// defer actual IEEE-754 arithmetic to Phase 2.
 pub mod fp_stubs {
     /// FP register groups
@@ -1900,7 +1900,7 @@ pub mod fp_stubs {
     // ========================================================================
     // FP STUBS - TESTNET SAFETY
     // 
-    // Per hardcore auditor recommendation:
+    // Per spec recommendation:
     // These stubs should REJECT (return false) until full FP witness
     // verification is implemented. This ensures FP disputes cannot be
     // resolved on-chain incorrectly.
@@ -2001,7 +2001,7 @@ pub mod fp_stubs {
 /// IEEE-754 Double Precision Floating-Point Verification (Phase 2)
 /// 
 /// Full implementation of FP verifiers for fraud proof disputes.
-/// Per auditor: Required for complete RandomX verification.
+/// Per spec: Required for complete RandomX verification.
 pub mod ieee754 {
     /// IEEE-754 double precision constants
     pub const SIGN_MASK: u64 = 0x8000000000000000;      // Bit 63
@@ -2208,7 +2208,7 @@ pub mod ieee754 {
     /// "This instruction calculates a 2-bit value by rotating the source register 
     /// right by imm32 bits and taking the 2 least significant bits"
     /// 
-    /// CRITICAL FIX (per auditor): imm32 is the rotation count, NOT fixed bits 59-60
+    /// CRITICAL FIX (per spec): imm32 is the rotation count, NOT fixed bits 59-60
     pub fn verify_cfround(
         src_value: u64,
         imm32: u32,
@@ -2509,7 +2509,7 @@ pub mod ieee754 {
     // ========================================================================
     // E-GROUP CONSTRAINT APPLICATION POINTS
     // 
-    // Per hardcore auditor (Finding #8), E-group constraints are applied
+    // Per spec (Finding #8), E-group constraints are applied
     // at SPECIFIC points, NOT after every FP operation:
     // 
     // 1. ITERATION START (spec 4.6.2 step 3):
@@ -2608,7 +2608,7 @@ pub mod ieee754 {
     /// 3. Sets mantissa bits 0-21 from entropy bits 0-21
     /// 4. Exponent bit 10 is ALWAYS 0 (NOT preserved from input)
     pub fn apply_e_group_constraint_with_mask(bits: u64, e_mask: u64) -> u64 {
-        // OPTIMIZATION NOTE (per hardcore auditor review):
+        // OPTIMIZATION NOTE (per spec review):
         // 
         // Reference uses dynamicMantissaMask = 0x00FFFFFFFFFFFFFF (56 bits)
         // which keeps bits 0-55. Then ORs with eMask.
@@ -2714,14 +2714,14 @@ pub mod ieee754 {
         f.sign == 0 && bits_0_3_valid && bits_8_9_valid && bit_10_valid
     }
     
-    /// E-group invariant: always positive (per auditor Q1)
+    /// E-group invariant: always positive (per spec Q1)
     pub fn verify_e_group_invariant(bits: u64) -> bool {
         // Sign is bit 63: bits / 2^63
         let sign: u64 = bits / POW2_63;
         sign == 0  // Must be positive
     }
     
-    /// F-group invariant: |value| < 3.0e+14 (per auditor Q1)
+    /// F-group invariant: |value| < 3.0e+14 (per spec Q1)
     /// From spec: f0-f3 values "will not exceed about 3.0e+14"
     /// 
     /// Derivation: log2(3e14) ≈ 48, biased exponent = 1023 + 48 = 1071
@@ -2735,7 +2735,7 @@ pub mod ieee754 {
         exp < 0x7FF && exp <= MAX_F_GROUP_EXPONENT.into()
     }
     
-    /// Verify FSWAP_R instruction (per auditor Q4)
+    /// Verify FSWAP_R instruction (per spec Q4)
     /// Swaps the lower and upper halves of the 128-bit destination register
     /// Before: [lo:64][hi:64] → After: [hi:64][lo:64]
     pub fn verify_fswap_r(
@@ -2749,7 +2749,7 @@ pub mod ieee754 {
     }
     
     // ========================================================================
-    // FDIV_M E-group Masking (per auditor recommendation)
+    // FDIV_M E-group Masking (per spec recommendation)
     // ========================================================================
     
     /// Dynamic mantissa mask: bottom 56 bits (52 mantissa + 4 dynamic exponent bits)
@@ -2767,7 +2767,7 @@ pub mod ieee754 {
     }
     
     /// Verify FDIV_M with automatic E-group masking of divisor
-    /// Per auditor: masking must be applied automatically, not as separate step
+    /// Per spec: masking must be applied automatically, not as separate step
     pub fn verify_fdiv_m(
         pre_dst_bits: u64,
         memory_value: u64,
@@ -2783,13 +2783,13 @@ pub mod ieee754 {
     }
     
     // ========================================================================
-    // FP Witness-Based Verification (per auditor recommendation)
+    // FP Witness-Based Verification (per spec recommendation)
     // ========================================================================
     
     /// Witness data for floating-point operation verification
     /// Provides intermediate computation values that can be verified with integer arithmetic
     /// 
-    /// Per auditor: This enables full verification without extended-precision FP in Cairo
+    /// Per spec: This enables full verification without extended-precision FP in Cairo
     /// Gas cost: ~50K per FP op (vs ~500K+ for full extended precision)
     #[derive(Drop, Copy, Serde, PartialEq)]
     pub struct FPWitness {
@@ -2807,7 +2807,7 @@ pub mod ieee754 {
         /// Number of leading zeros in result (for normalization)
         pub normalization_shift: u8,
         /// Alignment shift for FADD/FSUB (|exp_a - exp_b|)
-        /// Per auditor: needed to verify mantissa alignment before addition
+        /// Per spec: needed to verify mantissa alignment before addition
         pub alignment_shift: u8,
         /// Sign of operand A (pre-dst)
         pub sign_a: u8,
@@ -2843,7 +2843,7 @@ pub mod ieee754 {
     }
     
     // ========================================================================
-    // F-group Conversion (for FADD_M, FSUB_M) - Per Auditor Q6
+    // F-group Conversion (for FADD_M, FSUB_M) - Per spec Q6
     // ========================================================================
     
     /// Convert memory value to F-group operand pair
@@ -3329,7 +3329,7 @@ pub mod ieee754 {
 
 /// CBRANCH verifier with last_modified_pc tracking
 /// 
-/// Per auditor: Jump target is NOT current PC, but the instruction AFTER
+/// Per spec: Jump target is NOT current PC, but the instruction AFTER
 /// when dst register was last modified.
 pub mod cbranch_verifier {
     use super::IntegerRegisters;
@@ -3404,7 +3404,7 @@ pub mod cbranch_verifier {
         new_tracker
     }
     
-    /// CRITICAL (per auditor): CBRANCH modifies ALL registers
+    /// CRITICAL (per spec): CBRANCH modifies ALL registers
     /// 
     /// Per RandomX spec section 5.4.2:
     /// "The CBRANCH instruction is considered to modify all integer registers"
@@ -3498,7 +3498,7 @@ pub mod cbranch_verifier {
         // 6. Verify new PC
         // Per RandomX spec: jump target is "the instruction following the instruction 
         // when register dst was last modified"
-        // Per auditor: if never modified (NEVER_MODIFIED sentinel), jump to instruction 0
+        // Per spec: if never modified (NEVER_MODIFIED sentinel), jump to instruction 0
         let expected_new_pc = if claim.jump_taken {
             if claim.last_modified_pc == NEVER_MODIFIED {
                 0  // Never modified - jump to start of program

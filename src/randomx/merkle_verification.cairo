@@ -5,7 +5,7 @@
 // SECURITY-CRITICAL: This module provides the cryptographic foundation
 // for verifying that a prover accessed correct Dataset items.
 //
-// Per auditor recommendation and X41/Trail of Bits audit findings:
+// Per X41/Trail of Bits audit findings:
 // - AesHash1R alone is NOT cryptographically secure
 // - Merkle proofs are the ONLY way to prevent forgery
 // - Without these proofs, the entire verification is meaningless
