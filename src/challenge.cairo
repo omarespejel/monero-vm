@@ -251,6 +251,7 @@ pub mod ChallengeContract {
         ChallengeDefended: ChallengeDefended,
         BisectionMove: BisectionMove,
         ChallengeResolved: ChallengeResolved,
+        DeferredVerificationDispute: DeferredVerificationDispute,
     }
     
     #[derive(Drop, starknet::Event)]
@@ -282,6 +283,21 @@ pub mod ChallengeContract {
         pub challenge_id: u64,
         pub winner: ContractAddress,
         pub status: ChallengeStatus,
+    }
+    
+    /// Emitted when a dispute involves deferred verification (FP, memory, control flow)
+    /// Per auditor recommendation: Monitor frequency for governance escalation threshold
+    /// Threshold suggestion: If challenger_bond + defender_bond > 1 ETH, consider governance
+    #[derive(Drop, starknet::Event)]
+    pub struct DeferredVerificationDispute {
+        #[key]
+        pub challenge_id: u64,
+        /// Type of deferred verification: 0=FP, 1=Memory, 2=ControlFlow
+        pub dispute_type: u8,
+        /// Opcode that triggered deferred verification
+        pub opcode: u8,
+        /// Winner (defender in all deferred cases)
+        pub winner: ContractAddress,
     }
     
     #[constructor]
@@ -507,8 +523,22 @@ pub mod ChallengeContract {
             // - Verified: Prover wins
             // - Rejected: Prover loses (fraud detected)
             // - FPStubRejection: Defender wins (can't prove fraud without FP verification)
+            // - MemoryVerificationDeferred: Defender wins (Merkle witness not yet integrated)
+            // - ControlFlowVerificationDeferred: Defender wins (full state not yet integrated)
             // - InvalidProof: Prover loses
             let verification_result = verify_instruction_proof(proof);
+            
+            // Emit event for deferred verification (for monitoring per auditor recommendation)
+            // This helps track disputes that can't be fully verified
+            let dispute_type = get_deferred_dispute_type(verification_result);
+            if dispute_type != 255_u8 {  // 255 = not deferred
+                self.emit(DeferredVerificationDispute {
+                    challenge_id,
+                    dispute_type,
+                    opcode: proof.opcode,
+                    winner: challenge.defender,  // Defender always wins in deferred cases
+                });
+            }
             
             // Determine winner based on verification result
             // Per auditor: FP stub rejection → Defender wins
@@ -640,6 +670,13 @@ pub mod ChallengeContract {
         /// FP instruction but verification not implemented - defender wins
         /// Rationale: Can't prove fraud without full verification
         FPStubRejection,
+        /// Memory instruction verification deferred - defender wins
+        /// Per auditor: Memory verifiers require Merkle proofs not yet integrated
+        /// Rationale: Can't verify memory correctness without witness data
+        MemoryVerificationDeferred,
+        /// Control flow instruction (CBRANCH/ISTORE) verification deferred - defender wins
+        /// Per auditor: These require additional state (branch target, scratchpad updates)
+        ControlFlowVerificationDeferred,
         /// Invalid proof structure
         InvalidProof,
     }
@@ -648,6 +685,32 @@ pub mod ChallengeContract {
     fn is_fp_instruction(opcode: u8) -> bool {
         // FP opcodes: FADD_R=20, FADD_M=21, FSUB_R=22, FSUB_M=23, FMUL_R=24, FDIV_M=25, FSQRT_R=26, FSCAL_R=27
         opcode >= 20 && opcode <= 27
+    }
+    
+    /// Check if an opcode is a memory instruction (requires Merkle proof witness)
+    /// Per auditor NEW-1: Placeholder verification is exploitable
+    fn is_memory_instruction(opcode: u8) -> bool {
+        // Memory opcodes: IADD_M=12, ISUB_M=13, IMUL_M=14, IMULH_M=15, ISMULH_M=16, IXOR_M=17
+        opcode >= 12 && opcode <= 17
+    }
+    
+    /// Check if an opcode is a control flow instruction (requires additional state)
+    /// Per auditor NEW-2: CBRANCH and ISTORE use placeholder verification
+    fn is_control_flow_instruction(opcode: u8) -> bool {
+        // CBRANCH=30, ISTORE=31
+        opcode == 30 || opcode == 31
+    }
+    
+    /// Get deferred dispute type from verification result
+    /// Returns: 0=FP, 1=Memory, 2=ControlFlow, 255=NotDeferred
+    /// Used for DeferredVerificationDispute event emission
+    fn get_deferred_dispute_type(result: VerificationResult) -> u8 {
+        match result {
+            VerificationResult::FPStubRejection => 0_u8,
+            VerificationResult::MemoryVerificationDeferred => 1_u8,
+            VerificationResult::ControlFlowVerificationDeferred => 2_u8,
+            _ => 255_u8,  // Not a deferred type
+        }
     }
     
     /// Verify instruction execution proof
@@ -675,12 +738,24 @@ pub mod ChallengeContract {
             return VerificationResult::FPStubRejection;
         }
         
+        // Check if this is a memory instruction (opcodes 12-17)
+        // Per auditor NEW-1: Memory verifier placeholder is exploitable
+        // Handle like FP stubs until Merkle proof integration complete
+        if is_memory_instruction(proof.opcode) {
+            return VerificationResult::MemoryVerificationDeferred;
+        }
+        
+        // Check if this is CBRANCH (30) or ISTORE (31)
+        // Per auditor NEW-2: These also use placeholder verification
+        // Handle like FP stubs until full integration complete
+        if is_control_flow_instruction(proof.opcode) {
+            return VerificationResult::ControlFlowVerificationDeferred;
+        }
+        
         // Verify opcode is in valid range for integer instructions
-        // Valid: 0-17 (integer + memory), 18 (IADD_RS), 29 (NOP), 30 (CBRANCH), 31 (ISTORE)
-        // Per auditor: 15-17 (IMULH_M, ISMULH_M, IXOR_M) were missing - now included
-        let valid_opcode = proof.opcode <= 17  // 0-17: all integer register + memory ops
-            || proof.opcode == 30  // CBRANCH
-            || proof.opcode == 31  // ISTORE
+        // Valid: 0-11 (integer register ops), 18 (IADD_RS), 29 (NOP)
+        // Note: 12-17 (memory), 20-27 (FP), 30-31 (control) handled above
+        let valid_opcode = proof.opcode <= 11  // 0-11: integer register ops
             || proof.opcode == 29  // NOP
             || proof.opcode == 18; // IADD_RS
         
@@ -726,8 +801,10 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_ismulh_r(
                 proof.pre_regs, proof.dst_idx, proof.src_idx, proof.post_regs);
         }
+        // IMUL_RCP - Per auditor: MUST use full version for testnet
+        // Basic version only checks structure, not reciprocal correctness
         if op == 5 {
-            return crate::randomx::fraud_proof::instruction_verifiers::verify_imul_rcp(
+            return crate::randomx::fraud_proof::instruction_verifiers::verify_imul_rcp_full(
                 proof.pre_regs, proof.dst_idx, proof.imm32, proof.post_regs);
         }
         if op == 6 {
@@ -751,11 +828,9 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_ineg_r(
                 proof.pre_regs, proof.dst_idx, proof.post_regs);
         }
-        // Memory instructions (12-17) - require Merkle proofs, not yet integrated
-        // TODO: Integrate memory_verifiers in Phase 2
-        if op >= 12 && op <= 17 {
-            return proof.pre_state_hash != proof.post_state_hash;
-        }
+        // Memory instructions (12-17) - handled earlier via is_memory_instruction()
+        // returns MemoryVerificationDeferred before reaching here
+        
         // IADD_RS = 18 (uses shift and imm32 for r5)
         if op == 18 {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_iadd_rs(
@@ -767,13 +842,10 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_nop(
                 proof.pre_regs, proof.post_regs);
         }
-        // CBRANCH = 30, ISTORE = 31 - require additional state
-        // TODO: Integrate cbranch_verifier and istore verifier in Phase 2
-        if op == 30 || op == 31 {
-            return proof.pre_state_hash != proof.post_state_hash;
-        }
+        // CBRANCH (30) and ISTORE (31) - handled earlier via is_control_flow_instruction()
+        // returns ControlFlowVerificationDeferred before reaching here
         
-        // Unknown opcode
+        // Unknown opcode - should not reach here if opcode validation is correct
         false
     }
     
@@ -802,6 +874,16 @@ pub mod ChallengeContract {
             VerificationResult::FPStubRejection => {
                 // FP instruction, can't verify → Defender wins
                 // Rationale: "If challenger cannot prove fraud, they haven't proven anything"
+                defender
+            },
+            VerificationResult::MemoryVerificationDeferred => {
+                // Memory instruction, can't verify without Merkle witness → Defender wins
+                // Per auditor NEW-1: Safer than placeholder that only checks hash difference
+                defender
+            },
+            VerificationResult::ControlFlowVerificationDeferred => {
+                // CBRANCH/ISTORE, can't verify without full state → Defender wins
+                // Per auditor NEW-2: Safer than placeholder that only checks hash difference
                 defender
             },
             VerificationResult::InvalidProof => {

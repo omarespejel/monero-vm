@@ -1215,7 +1215,7 @@ use super::prototype::{wrapping_add_64, wrapping_sub_64, wrapping_mul_64};
 pub mod memory_verifiers {
     use core::poseidon::poseidon_hash_span;
     use super::{IntegerRegisters, RandomXState, wrapping_add_64, wrapping_sub_64, wrapping_mul_64};
-    use super::super::prototype::imulh_u64;
+    use super::super::prototype::{imulh_u64, ismulh_i64};
     
     /// Scratchpad sizes from configuration.h
     /// Reference: https://github.com/tevador/RandomX/blob/master/src/configuration.h
@@ -1467,10 +1467,10 @@ pub mod memory_verifiers {
         
         let dst_val = get_register(pre_state.registers.int_regs, dst_idx);
         // Use SIGNED multiply high (ismulh_i64) instead of unsigned (imulh_u64)
-        let dst_signed = to_i64(dst_val);
-        let mem_signed = to_i64(witness.value);
+        let dst_signed = u64_to_i64_mem(dst_val);
+        let mem_signed = u64_to_i64_mem(witness.value);
         let result_signed = ismulh_i64(dst_signed, mem_signed);
-        let expected = from_i64(result_signed);
+        let expected = i64_to_u64_mem(result_signed);
         
         let post_dst = get_register(post_regs, dst_idx);
         if post_dst != expected {
@@ -1478,6 +1478,27 @@ pub mod memory_verifiers {
         }
         
         verify_other_registers_unchanged(pre_state.registers.int_regs, post_regs, dst_idx)
+    }
+    
+    /// Convert u64 to i64 for signed memory operations
+    fn u64_to_i64_mem(x: u64) -> i64 {
+        if x < 0x8000000000000000 {
+            x.try_into().unwrap()
+        } else {
+            let complement: u64 = 0xFFFFFFFFFFFFFFFF - x;
+            let neg_val: i64 = (complement + 1).try_into().unwrap();
+            -neg_val
+        }
+    }
+    
+    /// Convert i64 to u64 for storage
+    fn i64_to_u64_mem(x: i64) -> u64 {
+        if x >= 0 {
+            x.try_into().unwrap()
+        } else {
+            let abs_x: u64 = (-(x + 1)).try_into().unwrap();
+            0xFFFFFFFFFFFFFFFF - abs_x
+        }
     }
     
     /// Verify IXOR_M: dst = dst ^ [mem]
