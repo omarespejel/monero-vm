@@ -5,8 +5,9 @@
 
 use starknet::ContractAddress;
 
-// Re-export IntegerRegisters for InstructionProof struct
+// Re-export register types for InstructionProof struct
 pub use crate::randomx::fraud_proof::IntegerRegisters;
+pub use crate::randomx::fraud_proof::{FloatRegister, FloatRegisters};
 
 /// Instruction opcodes for RandomX
 /// Reference: https://github.com/tevador/RandomX/blob/master/src/instruction.hpp
@@ -37,7 +38,7 @@ pub mod opcodes {
     // Shift with displacement
     pub const IADD_RS: u8 = 18;
     
-    // FP instructions (20-31)
+    // FP instructions (20-28)
     pub const FADD_R: u8 = 20;
     pub const FADD_M: u8 = 21;
     pub const FSUB_R: u8 = 22;
@@ -46,6 +47,7 @@ pub mod opcodes {
     pub const FDIV_M: u8 = 25;
     pub const FSQRT_R: u8 = 26;
     pub const FSCAL_R: u8 = 27;
+    pub const CFROUND: u8 = 28;
     
     // NOP and control flow
     pub const NOP: u8 = 29;
@@ -225,6 +227,62 @@ pub struct InstructionProof {
     pub r5_last_mod: u32,
     pub r6_last_mod: u32,
     pub r7_last_mod: u32,
+    
+    // ========================================================================
+    // Floating-point instruction fields (opcodes 20-28)
+    // Required for IEEE-754 verification with witness-based proofs
+    // ========================================================================
+    
+    /// Pre-execution floating-point registers (F-group f0-f3, E-group e0-e3, A-group a0-a3)
+    pub pre_float_regs: FloatRegisters,
+    /// Post-execution floating-point registers (claimed by prover)
+    pub post_float_regs: FloatRegisters,
+    
+    /// Floating-point rounding control (0-3 per IEEE-754 rounding modes)
+    /// 0 = roundToNearest, 1 = roundDown, 2 = roundUp, 3 = roundToZero
+    pub fprc: u8,
+    
+    /// E-mask for E-group masking (FDIV_M, iteration start)
+    /// Contains exponent mask (bits 52-62) and mantissa mask (bits 0-21)
+    pub e_mask: u64,
+    
+    // FP Witness data for complex operations (FADD, FMUL, FDIV, FSQRT)
+    // Provides intermediate values that can be verified with integer arithmetic
+    
+    /// Extended mantissa high bits (for intermediate computation)
+    pub fp_witness_mantissa_hi: u64,
+    /// Extended mantissa low bits
+    pub fp_witness_mantissa_lo: u64,
+    /// Rounding adjustment applied (0-2)
+    pub fp_witness_rounding_adj: u8,
+    /// Guard/Round/Sticky bits packed: (guard*4 + round*2 + sticky)
+    pub fp_witness_grs: u8,
+    /// Alignment shift for addition/subtraction
+    pub fp_witness_shift: u8,
+    /// Result sign (0 = positive, 1 = negative)
+    pub fp_witness_result_sign: u8,
+    /// Result exponent before normalization
+    pub fp_witness_exponent: i16,
+    /// Normalization shift (leading zeros)
+    pub fp_witness_norm_shift: u8,
+    /// Is subtraction operation
+    pub fp_witness_is_sub: u8,
+    
+    // Second witness for 128-bit register operations (lo and hi lanes)
+    pub fp_witness2_mantissa_hi: u64,
+    pub fp_witness2_mantissa_lo: u64,
+    pub fp_witness2_rounding_adj: u8,
+    pub fp_witness2_grs: u8,
+    pub fp_witness2_shift: u8,
+    pub fp_witness2_result_sign: u8,
+    pub fp_witness2_exponent: i16,
+    pub fp_witness2_norm_shift: u8,
+    pub fp_witness2_is_sub: u8,
+    
+    // E-mask source entropy for validation
+    /// Program entropy value used to compute e_mask
+    /// Verifier computes: e_mask_expected = compute_e_mask(e_mask_entropy)
+    pub e_mask_entropy: u64,
 }
 
 /// Contract interface
@@ -754,8 +812,8 @@ pub mod ChallengeContract {
     
     /// Check if an opcode is a floating-point instruction
     fn is_fp_instruction(opcode: u8) -> bool {
-        // FP opcodes: FADD_R=20, FADD_M=21, FSUB_R=22, FSUB_M=23, FMUL_R=24, FDIV_M=25, FSQRT_R=26, FSCAL_R=27
-        opcode >= 20 && opcode <= 27
+        // FP opcodes: FADD_R=20, FADD_M=21, FSUB_R=22, FSUB_M=23, FMUL_R=24, FDIV_M=25, FSQRT_R=26, FSCAL_R=27, CFROUND=28
+        opcode >= 20 && opcode <= 28
     }
     
     /// Check if an opcode is a memory instruction (requires Merkle proof witness)
@@ -803,10 +861,15 @@ pub mod ChallengeContract {
             return VerificationResult::InvalidProof;
         }
         
-        // Check if this is an FP instruction (opcodes 20-27)
-        // Per auditor: "FP stubs rejecting = incomplete verification, not fraud detection"
+        // Check if this is an FP instruction (opcodes 20-28)
+        // NOW INTEGRATED: Actually call FP verifiers with IEEE-754 compliance
         if is_fp_instruction(proof.opcode) {
-            return VerificationResult::FPStubRejection;
+            let is_valid = verify_fp_opcode_execution(proof);
+            return if is_valid {
+                VerificationResult::Verified
+            } else {
+                VerificationResult::Rejected
+            };
         }
         
         // Check if this is a memory instruction (opcodes 12-17)
@@ -932,7 +995,7 @@ pub mod ChallengeContract {
             return crate::randomx::fraud_proof::instruction_verifiers::verify_nop(
                 proof.pre_regs, proof.post_regs);
         }
-        // CBRANCH (30) still deferred (requires register modification tracking)
+        // CBRANCH (30) now handled by verify_cbranch_execution with register tracking
         // ISTORE (31) now handled by verify_istore_execution
         
         // Unknown opcode - should not reach here if opcode validation is correct
@@ -1156,6 +1219,411 @@ pub mod ChallengeContract {
             7 => regs.r7,
             _ => 0,
         }
+    }
+    
+    // ========================================================================
+    // Floating-Point Instruction Verification (opcodes 20-28)
+    // ========================================================================
+    
+    /// Verify floating-point instruction execution
+    /// Supports FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R, CFROUND
+    fn verify_fp_opcode_execution(proof: super::InstructionProof) -> bool {
+        let op = proof.opcode;
+        
+        // CFROUND (opcode 28): Set FPRC from register bits
+        // This only changes FPRC state, no float register modification
+        if op == 28 {
+            return verify_cfround_execution(proof);
+        }
+        
+        // FSCAL_R (opcode 27): XOR with constant mask
+        // Fully verifiable without FP computation
+        if op == 27 {
+            return verify_fscal_r_execution(proof);
+        }
+        
+        // For FADD_R (20), FADD_M (21), FSUB_R (22), FSUB_M (23),
+        // FMUL_R (24), FDIV_M (25), FSQRT_R (26):
+        // Use IEEE-754 verifiers from fraud_proof module
+        
+        // Get source and destination float register indices
+        // F-group (f0-f3): indices 0-3 for FADD/FSUB
+        // E-group (e0-e3): indices 4-7 for FMUL/FDIV/FSQRT
+        // A-group (a0-a3): indices 8-11 (read-only source)
+        
+        if op == 20 {
+            verify_fadd_r_execution(proof)  // FADD_R
+        } else if op == 21 {
+            verify_fadd_m_execution(proof)  // FADD_M
+        } else if op == 22 {
+            verify_fsub_r_execution(proof)  // FSUB_R
+        } else if op == 23 {
+            verify_fsub_m_execution(proof)  // FSUB_M
+        } else if op == 24 {
+            verify_fmul_r_execution(proof)  // FMUL_R
+        } else if op == 25 {
+            verify_fdiv_m_execution(proof)  // FDIV_M
+        } else if op == 26 {
+            verify_fsqrt_r_execution(proof) // FSQRT_R
+        } else {
+            false
+        }
+    }
+    
+    /// Verify CFROUND execution (opcode 28)
+    /// Sets FPRC (floating-point rounding control) from src register bits
+    fn verify_cfround_execution(proof: super::InstructionProof) -> bool {
+        // CFROUND extracts 2 bits from src register, rotated by imm32
+        // Per RandomX spec: fprc = (src >> (imm32 & 63)) & 3
+        let src_val = get_register_value(proof.pre_regs, proof.src_idx);
+        let rotation: u32 = proof.imm32 & 63;
+        
+        // Rotate right by rotation amount
+        let rotated: u64 = if rotation == 0 {
+            src_val
+        } else {
+            let rot_u64: u64 = rotation.into();
+            (src_val / pow2_u64(rot_u64)) | (src_val * pow2_u64(64 - rot_u64))
+        };
+        
+        // Extract 2 LSBs
+        let expected_fprc: u8 = (rotated & 3).try_into().unwrap();
+        
+        // Verify FPRC in proof matches expected
+        proof.fprc == expected_fprc
+            // CFROUND does not modify any registers
+            && proof.pre_regs == proof.post_regs
+            && proof.pre_float_regs == proof.post_float_regs
+    }
+    
+    /// Power of 2 helper for u64
+    fn pow2_u64(exp: u64) -> u64 {
+        if exp >= 64 { return 0; }
+        let mut result: u64 = 1;
+        let mut i: u64 = 0;
+        loop {
+            if i >= exp { break; }
+            result = result * 2;
+            i += 1;
+        };
+        result
+    }
+    
+    /// Verify FSCAL_R execution (opcode 27)
+    /// XORs F-group register with constant mask 0x80F0000000000000
+    fn verify_fscal_r_execution(proof: super::InstructionProof) -> bool {
+        // FSCAL_R operates on F-group (f0-f3, indices 0-3)
+        if proof.dst_idx >= 4 {
+            return false;
+        }
+        
+        const FSCAL_MASK: u64 = 0x80F0000000000000;
+        
+        // Get pre and post values for destination register
+        let (pre_lo, pre_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_lo, post_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        
+        // Verify XOR operation on both lanes
+        let expected_lo = pre_lo ^ FSCAL_MASK;
+        let expected_hi = pre_hi ^ FSCAL_MASK;
+        
+        post_lo == expected_lo && post_hi == expected_hi
+            // Other float registers unchanged
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            // Integer registers unchanged
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Build FPWitness for lane 1 (lo) from proof fields
+    fn build_fp_witness_lo(proof: super::InstructionProof, is_sub: u8) -> crate::randomx::fraud_proof::ieee754::FPWitness {
+        crate::randomx::fraud_proof::ieee754::FPWitness {
+            extended_mantissa_hi: proof.fp_witness_mantissa_hi,
+            extended_mantissa_lo: proof.fp_witness_mantissa_lo,
+            rounding_adjustment: proof.fp_witness_rounding_adj.try_into().unwrap(),
+            guard_round_sticky: proof.fp_witness_grs,
+            result_exponent: proof.fp_witness_exponent,
+            normalization_shift: proof.fp_witness_norm_shift,
+            alignment_shift: proof.fp_witness_shift,
+            sign_a: 0,  // Derived from operands
+            sign_b: 0,  // Derived from operands
+            sign_result: proof.fp_witness_result_sign,
+            ftz_daz_active: 1,  // RandomX always uses FTZ/DAZ
+            fprc_at_execution: proof.fprc,
+            is_sub: is_sub,
+        }
+    }
+    
+    /// Build FPWitness for lane 2 (hi) from proof fields
+    fn build_fp_witness_hi(proof: super::InstructionProof, is_sub: u8) -> crate::randomx::fraud_proof::ieee754::FPWitness {
+        crate::randomx::fraud_proof::ieee754::FPWitness {
+            extended_mantissa_hi: proof.fp_witness2_mantissa_hi,
+            extended_mantissa_lo: proof.fp_witness2_mantissa_lo,
+            rounding_adjustment: proof.fp_witness2_rounding_adj.try_into().unwrap(),
+            guard_round_sticky: proof.fp_witness2_grs,
+            result_exponent: proof.fp_witness2_exponent,
+            normalization_shift: proof.fp_witness2_norm_shift,
+            alignment_shift: proof.fp_witness2_shift,
+            sign_a: 0,
+            sign_b: 0,
+            sign_result: proof.fp_witness2_result_sign,
+            ftz_daz_active: 1,
+            fprc_at_execution: proof.fprc,
+            is_sub: is_sub,
+        }
+    }
+    
+    /// Verify FADD_R execution (opcode 20) with witness-based verification
+    /// dst_lo/hi = dst_lo/hi + a_lo/hi (F-group + A-group)
+    fn verify_fadd_r_execution(proof: super::InstructionProof) -> bool {
+        // FADD_R: dst is F-group (0-3), src is A-group (8-11)
+        if proof.dst_idx >= 4 {
+            return false;
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        
+        // A-group source: offset by 8 in indexing, but stored as a0-a3 (indices 8-11)
+        let src_idx = proof.src_idx;
+        let (src_lo, src_hi) = get_float_register(proof.pre_float_regs, src_idx + 8);
+        
+        // Build witnesses for both lanes
+        let witness_lo = build_fp_witness_lo(proof, 0);  // is_sub = 0 for FADD
+        let witness_hi = build_fp_witness_hi(proof, 0);
+        
+        // Verify both lanes using witness-based IEEE-754 verifier
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_lo, src_lo, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_hi, src_hi, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Verify FADD_M execution (opcode 21) with witness-based verification
+    /// dst_lo/hi = dst_lo/hi + convert(mem) (F-group + memory)
+    fn verify_fadd_m_execution(proof: super::InstructionProof) -> bool {
+        // FADD_M: dst is F-group (0-3)
+        if proof.dst_idx >= 4 {
+            return false;
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        
+        // Convert memory value to F-group operand (signed int32 halves to double)
+        let (src_lo, src_hi) = crate::randomx::fraud_proof::ieee754::convert_f_group_operand(
+            proof.mem_value);
+        
+        // Build witnesses for both lanes
+        let witness_lo = build_fp_witness_lo(proof, 0);
+        let witness_hi = build_fp_witness_hi(proof, 0);
+        
+        // Verify both lanes with witness
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_lo, src_lo, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_hi, src_hi, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Verify FSUB_R execution (opcode 22) with witness-based verification
+    fn verify_fsub_r_execution(proof: super::InstructionProof) -> bool {
+        if proof.dst_idx >= 4 {
+            return false;
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        let src_idx = proof.src_idx;
+        let (src_lo, src_hi) = get_float_register(proof.pre_float_regs, src_idx + 8);
+        
+        // Build witnesses for subtraction (is_sub = 1)
+        let witness_lo = build_fp_witness_lo(proof, 1);
+        let witness_hi = build_fp_witness_hi(proof, 1);
+        
+        // FSUB uses FADD verifier with negated src (handled internally by verify_fsub_with_witness)
+        // But we'll use the same witness structure with is_sub flag
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_lo, src_lo ^ 0x8000000000000000, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_hi, src_hi ^ 0x8000000000000000, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Verify FSUB_M execution (opcode 23) with witness-based verification
+    fn verify_fsub_m_execution(proof: super::InstructionProof) -> bool {
+        if proof.dst_idx >= 4 {
+            return false;
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        let (src_lo, src_hi) = crate::randomx::fraud_proof::ieee754::convert_f_group_operand(
+            proof.mem_value);
+        
+        // Build witnesses for subtraction
+        let witness_lo = build_fp_witness_lo(proof, 1);
+        let witness_hi = build_fp_witness_hi(proof, 1);
+        
+        // Negate sources for subtraction
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_lo, src_lo ^ 0x8000000000000000, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fadd_with_witness(
+            pre_dst_hi, src_hi ^ 0x8000000000000000, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Verify FMUL_R execution (opcode 24) with witness-based verification
+    /// E-group multiplication: dst = dst * src
+    fn verify_fmul_r_execution(proof: super::InstructionProof) -> bool {
+        // FMUL_R: dst is E-group (indices 4-7 in our scheme, e0-e3)
+        if proof.dst_idx < 4 || proof.dst_idx >= 8 {
+            return false;
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        // A-group source for FMUL_R
+        let src_idx = proof.src_idx;
+        let (src_lo, src_hi) = get_float_register(proof.pre_float_regs, src_idx + 8);
+        
+        // Build witnesses for multiplication
+        let witness_lo = build_fp_witness_lo(proof, 0);
+        let witness_hi = build_fp_witness_hi(proof, 0);
+        
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fmul_with_witness(
+            pre_dst_lo, src_lo, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fmul_with_witness(
+            pre_dst_hi, src_hi, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Verify FDIV_M execution (opcode 25) with witness-based verification
+    /// E-group division with memory source and E-mask
+    /// Includes E-mask source entropy validation
+    fn verify_fdiv_m_execution(proof: super::InstructionProof) -> bool {
+        if proof.dst_idx < 4 || proof.dst_idx >= 8 {
+            return false;
+        }
+        
+        // E-MASK SOURCE VALIDATION:
+        // Verify that proof.e_mask matches compute_e_mask(proof.e_mask_entropy)
+        // This prevents attackers from providing arbitrary e_mask values
+        let expected_e_mask = crate::randomx::fraud_proof::ieee754::compute_e_mask(
+            proof.e_mask_entropy);
+        if proof.e_mask != expected_e_mask {
+            return false;  // E-mask doesn't match entropy source
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        
+        // Build witnesses for division
+        let witness_lo = build_fp_witness_lo(proof, 0);
+        let witness_hi = build_fp_witness_hi(proof, 0);
+        
+        // Apply E-mask to memory value to get divisor
+        let divisor = crate::randomx::fraud_proof::ieee754::apply_e_group_mask(
+            proof.mem_value, proof.e_mask);
+        
+        // For FDIV_M, the divisor comes from memory with E-mask applied
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fdiv_with_witness(
+            pre_dst_lo, divisor, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fdiv_with_witness(
+            pre_dst_hi, divisor, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Verify FSQRT_R execution (opcode 26) with witness-based verification
+    /// E-group square root
+    fn verify_fsqrt_r_execution(proof: super::InstructionProof) -> bool {
+        if proof.dst_idx < 4 || proof.dst_idx >= 8 {
+            return false;
+        }
+        
+        let (pre_dst_lo, pre_dst_hi) = get_float_register(proof.pre_float_regs, proof.dst_idx);
+        let (post_dst_lo, post_dst_hi) = get_float_register(proof.post_float_regs, proof.dst_idx);
+        
+        // Build witnesses for square root
+        let witness_lo = build_fp_witness_lo(proof, 0);
+        let witness_hi = build_fp_witness_hi(proof, 0);
+        
+        let lo_valid = crate::randomx::fraud_proof::ieee754::verify_fsqrt_with_witness(
+            pre_dst_lo, post_dst_lo, proof.fprc, witness_lo);
+        let hi_valid = crate::randomx::fraud_proof::ieee754::verify_fsqrt_with_witness(
+            pre_dst_hi, post_dst_hi, proof.fprc, witness_hi);
+        
+        lo_valid && hi_valid
+            && verify_other_float_regs_unchanged(
+                proof.pre_float_regs, proof.post_float_regs, proof.dst_idx)
+            && proof.pre_regs == proof.post_regs
+    }
+    
+    /// Get float register value by index (0-11)
+    /// 0-3: F-group (f0-f3), 4-7: E-group (e0-e3), 8-11: A-group (a0-a3)
+    fn get_float_register(regs: super::FloatRegisters, idx: u8) -> (u64, u64) {
+        match idx {
+            0 => (regs.f0.low, regs.f0.high),
+            1 => (regs.f1.low, regs.f1.high),
+            2 => (regs.f2.low, regs.f2.high),
+            3 => (regs.f3.low, regs.f3.high),
+            4 => (regs.e0.low, regs.e0.high),
+            5 => (regs.e1.low, regs.e1.high),
+            6 => (regs.e2.low, regs.e2.high),
+            7 => (regs.e3.low, regs.e3.high),
+            8 => (regs.a0.low, regs.a0.high),
+            9 => (regs.a1.low, regs.a1.high),
+            10 => (regs.a2.low, regs.a2.high),
+            11 => (regs.a3.low, regs.a3.high),
+            _ => (0, 0),
+        }
+    }
+    
+    /// Verify other float registers unchanged (except dst_idx)
+    fn verify_other_float_regs_unchanged(
+        pre: super::FloatRegisters,
+        post: super::FloatRegisters,
+        dst_idx: u8
+    ) -> bool {
+        // Check all registers except dst_idx
+        (dst_idx == 0 || pre.f0 == post.f0) &&
+        (dst_idx == 1 || pre.f1 == post.f1) &&
+        (dst_idx == 2 || pre.f2 == post.f2) &&
+        (dst_idx == 3 || pre.f3 == post.f3) &&
+        (dst_idx == 4 || pre.e0 == post.e0) &&
+        (dst_idx == 5 || pre.e1 == post.e1) &&
+        (dst_idx == 6 || pre.e2 == post.e2) &&
+        (dst_idx == 7 || pre.e3 == post.e3) &&
+        // A-group is always read-only
+        pre.a0 == post.a0 &&
+        pre.a1 == post.a1 &&
+        pre.a2 == post.a2 &&
+        pre.a3 == post.a3
     }
     
     /// Resolve dispute based on verification result
