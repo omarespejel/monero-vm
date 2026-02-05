@@ -1448,6 +1448,38 @@ pub mod memory_verifiers {
         verify_other_registers_unchanged(pre_state.registers.int_regs, post_regs, dst_idx)
     }
     
+    /// Verify ISMULH_M: dst = (dst * [mem]) >> 64 (SIGNED high multiplication)
+    /// Per auditor: This was missing - opcode 16 in RandomX
+    pub fn verify_ismulh_m(
+        pre_state: RandomXState,
+        dst_idx: u8,
+        src_idx: u8,
+        imm32: u32,
+        witness: MemoryWitness,
+        post_regs: IntegerRegisters
+    ) -> bool {
+        let src_val = get_register(pre_state.registers.int_regs, src_idx);
+        let addr = compute_scratchpad_address(src_val, imm32);
+        
+        if !verify_memory_read(pre_state.scratchpad_root, addr, witness) {
+            return false;
+        }
+        
+        let dst_val = get_register(pre_state.registers.int_regs, dst_idx);
+        // Use SIGNED multiply high (ismulh_i64) instead of unsigned (imulh_u64)
+        let dst_signed = to_i64(dst_val);
+        let mem_signed = to_i64(witness.value);
+        let result_signed = ismulh_i64(dst_signed, mem_signed);
+        let expected = from_i64(result_signed);
+        
+        let post_dst = get_register(post_regs, dst_idx);
+        if post_dst != expected {
+            return false;
+        }
+        
+        verify_other_registers_unchanged(pre_state.registers.int_regs, post_regs, dst_idx)
+    }
+    
     /// Verify IXOR_M: dst = dst ^ [mem]
     pub fn verify_ixor_m(
         pre_state: RandomXState,
