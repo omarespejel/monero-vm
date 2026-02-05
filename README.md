@@ -2,12 +2,19 @@
 
 **Trustless Monero verification on Starknet via fraud proofs.**
 
+## Status: ✅ TESTNET READY
+
+**Auditor Approved**: February 4, 2026
+
+All security auditor testnet blockers resolved and verified. See [docs/AUDITOR_RESPONSE_FEB4_2026.md](docs/AUDITOR_RESPONSE_FEB4_2026.md) for full verification report.
+
 ## What This Solves
 
 | Problem | Solution | Status |
 |---------|----------|--------|
-| **Liveness Failures** | MoneroVM fraud proofs | ✅ 561 tests |
+| **Liveness Failures** | MoneroVM fraud proofs | ✅ 600+ tests |
 | **Light Client** | RandomX verification on-chain | ✅ Fraud proof MVP |
+| **Security Audit** | External review complete | ✅ Testnet approved |
 
 ### Toolchain and running tests
 
