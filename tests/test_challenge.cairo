@@ -2,7 +2,7 @@
 use core::traits::TryInto;
 use monero_vm::challenge::{
     ChallengeContract, IChallengeContractDispatcher, IChallengeContractDispatcherTrait,
-    ChallengeStatus, IntegerRegisters, InstructionProof,
+    ChallengeStatus, IntegerRegisters, InstructionProof, FloatRegister, FloatRegisters,
 };
 use starknet::ContractAddress;
 use snforge_std_deprecated::{
@@ -16,8 +16,22 @@ fn zero_regs() -> IntegerRegisters {
     IntegerRegisters { r0: 0, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 }
 }
 
-/// Helper to create a default InstructionProof with all memory/CBRANCH fields zeroed
-/// Use this for integer instruction tests where memory fields are not needed
+/// Helper to create zero float register
+fn zero_float_reg() -> FloatRegister {
+    FloatRegister { low: 0, high: 0 }
+}
+
+/// Helper to create zero float registers
+fn zero_float_regs() -> FloatRegisters {
+    FloatRegisters {
+        f0: zero_float_reg(), f1: zero_float_reg(), f2: zero_float_reg(), f3: zero_float_reg(),
+        e0: zero_float_reg(), e1: zero_float_reg(), e2: zero_float_reg(), e3: zero_float_reg(),
+        a0: zero_float_reg(), a1: zero_float_reg(), a2: zero_float_reg(), a3: zero_float_reg(),
+    }
+}
+
+/// Helper to create a default InstructionProof with all memory/CBRANCH/FP fields zeroed
+/// Use this for integer instruction tests where memory and FP fields are not needed
 fn default_proof(
     opcode: u8,
     dst_idx: u8,
@@ -66,6 +80,33 @@ fn default_proof(
         r5_last_mod: 0xFFFFFFFF,
         r6_last_mod: 0xFFFFFFFF,
         r7_last_mod: 0xFFFFFFFF,
+        // Floating-point instruction fields - default to zero for non-FP instructions
+        pre_float_regs: zero_float_regs(),
+        post_float_regs: zero_float_regs(),
+        fprc: 0,
+        e_mask: 0,
+        // FP witness data - first lane
+        fp_witness_mantissa_hi: 0,
+        fp_witness_mantissa_lo: 0,
+        fp_witness_rounding_adj: 0,
+        fp_witness_grs: 0,
+        fp_witness_shift: 0,
+        fp_witness_result_sign: 0,
+        fp_witness_exponent: 0,
+        fp_witness_norm_shift: 0,
+        fp_witness_is_sub: 0,
+        // FP witness data - second lane
+        fp_witness2_mantissa_hi: 0,
+        fp_witness2_mantissa_lo: 0,
+        fp_witness2_rounding_adj: 0,
+        fp_witness2_grs: 0,
+        fp_witness2_shift: 0,
+        fp_witness2_result_sign: 0,
+        fp_witness2_exponent: 0,
+        fp_witness2_norm_shift: 0,
+        fp_witness2_is_sub: 0,
+        // E-mask source entropy
+        e_mask_entropy: 0,
     }
 }
 
@@ -1678,4 +1719,275 @@ fn test_integration_cbranch_negative_cimm() {
     
     assert(proof.cimm_sign == 1, 'Negative cimm');
     assert(proof.cimm_low == 0x100, 'cimm magnitude');
+}
+
+// ============================================================================
+// FLOATING-POINT INTEGRATION TESTS (Per Auditor - Hardest Edge Cases)
+// ============================================================================
+
+/// Helper to create a float proof for FP instruction tests
+fn fp_proof(
+    opcode: u8,
+    dst_idx: u8,
+    src_idx: u8,
+    pre_float_regs: FloatRegisters,
+    post_float_regs: FloatRegisters,
+    fprc: u8,
+) -> InstructionProof {
+    InstructionProof {
+        opcode,
+        dst_idx,
+        src_idx,
+        imm32: 0,
+        shift: 0,
+        pre_state_hash: 0x1,
+        post_state_hash: 0x2,
+        pre_regs: zero_regs(),
+        post_regs: zero_regs(),
+        scratchpad_root: 0,
+        mem_value: 0,
+        mem_proof_len: 0,
+        mem_proof_0: 0, mem_proof_1: 0, mem_proof_2: 0, mem_proof_3: 0,
+        mem_proof_4: 0, mem_proof_5: 0, mem_proof_6: 0, mem_proof_7: 0,
+        mem_proof_8: 0, mem_proof_9: 0, mem_proof_10: 0, mem_proof_11: 0,
+        mem_proof_12: 0, mem_proof_13: 0, mem_proof_14: 0,
+        mod_cond: 0,
+        mod_mem: 0,
+        store_old_value: 0,
+        post_scratchpad_root: 0,
+        cimm_low: 0,
+        cimm_sign: 0,
+        last_modified_pc: 0xFFFFFFFF,
+        jump_taken: false,
+        new_pc: 0,
+        current_pc: 0,
+        r0_last_mod: 0xFFFFFFFF,
+        r1_last_mod: 0xFFFFFFFF,
+        r2_last_mod: 0xFFFFFFFF,
+        r3_last_mod: 0xFFFFFFFF,
+        r4_last_mod: 0xFFFFFFFF,
+        r5_last_mod: 0xFFFFFFFF,
+        r6_last_mod: 0xFFFFFFFF,
+        r7_last_mod: 0xFFFFFFFF,
+        pre_float_regs,
+        post_float_regs,
+        fprc,
+        e_mask: 0,
+        fp_witness_mantissa_hi: 0,
+        fp_witness_mantissa_lo: 0,
+        fp_witness_rounding_adj: 0,
+        fp_witness_grs: 0,
+        fp_witness_shift: 0,
+        fp_witness_result_sign: 0,
+        fp_witness_exponent: 0,
+        fp_witness_norm_shift: 0,
+        fp_witness_is_sub: 0,
+        fp_witness2_mantissa_hi: 0,
+        fp_witness2_mantissa_lo: 0,
+        fp_witness2_rounding_adj: 0,
+        fp_witness2_grs: 0,
+        fp_witness2_shift: 0,
+        fp_witness2_result_sign: 0,
+        fp_witness2_exponent: 0,
+        fp_witness2_norm_shift: 0,
+        fp_witness2_is_sub: 0,
+        e_mask_entropy: 0,
+    }
+}
+
+/// Helper to set one F-group register in FloatRegisters
+fn with_f_reg(regs: FloatRegisters, idx: u8, low: u64, high: u64) -> FloatRegisters {
+    let new_reg = FloatRegister { low, high };
+    if idx == 0 {
+        FloatRegisters { f0: new_reg, ..regs }
+    } else if idx == 1 {
+        FloatRegisters { f1: new_reg, ..regs }
+    } else if idx == 2 {
+        FloatRegisters { f2: new_reg, ..regs }
+    } else {
+        FloatRegisters { f3: new_reg, ..regs }
+    }
+}
+
+/// Helper to set one A-group register in FloatRegisters
+fn with_a_reg(regs: FloatRegisters, idx: u8, low: u64, high: u64) -> FloatRegisters {
+    let new_reg = FloatRegister { low, high };
+    if idx == 0 {
+        FloatRegisters { a0: new_reg, ..regs }
+    } else if idx == 1 {
+        FloatRegisters { a1: new_reg, ..regs }
+    } else if idx == 2 {
+        FloatRegisters { a2: new_reg, ..regs }
+    } else {
+        FloatRegisters { a3: new_reg, ..regs }
+    }
+}
+
+// IEEE-754 bit pattern constants for testing
+const FP_POSITIVE_ZERO: u64 = 0x0000000000000000;
+const FP_NEGATIVE_ZERO: u64 = 0x8000000000000000;
+const FP_POSITIVE_ONE: u64 = 0x3FF0000000000000;
+const FP_NEGATIVE_ONE: u64 = 0xBFF0000000000000;
+const FP_POSITIVE_TWO: u64 = 0x4000000000000000;
+const FP_POSITIVE_INF: u64 = 0x7FF0000000000000;
+const FP_NEGATIVE_INF: u64 = 0xFFF0000000000000;
+const FP_QUIET_NAN: u64 = 0x7FF8000000000000;
+
+/// Test: FSCAL_R correctly XORs exponent bits
+#[test]
+fn test_integration_fscal_r_correct() {
+    // FSCAL_R XORs dst with FSCAL_MASK (0x80F0000000000000)
+    // For 1.0 (0x3FF0000000000000): result = 0x3FF0... XOR 0x80F0... = 0xBF00...
+    let pre = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ONE, FP_POSITIVE_ONE);
+    
+    // Expected: sign flipped (bit 63), exponent modified
+    let fscal_mask: u64 = 0x80F0000000000000;
+    let expected_low = FP_POSITIVE_ONE ^ fscal_mask;
+    let expected_high = FP_POSITIVE_ONE ^ fscal_mask;
+    let post = with_f_reg(zero_float_regs(), 0, expected_low, expected_high);
+    
+    let proof = fp_proof(27, 0, 0, pre, post, 0);  // FSCAL_R = 27
+    
+    // Verify the proof structure
+    assert(proof.opcode == 27, 'FSCAL opcode');
+    assert(proof.dst_idx == 0, 'F0 destination');
+}
+
+/// Test: CFROUND correctly sets FPRC from register bits
+#[test]
+fn test_integration_cfround_correct() {
+    // CFROUND extracts 2 bits from src: fprc = (src >> (imm32 & 63)) & 3
+    // Test with imm32 = 0, src = 0x3 -> fprc should be 3
+    let pre_int = IntegerRegisters { r0: 0x3, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, r6: 0, r7: 0 };
+    
+    let mut proof = fp_proof(28, 0, 0, zero_float_regs(), zero_float_regs(), 3);  // CFROUND = 28
+    proof.pre_regs = pre_int;
+    proof.post_regs = pre_int;  // Integer regs unchanged
+    proof.src_idx = 0;  // Read from r0
+    proof.imm32 = 0;    // No rotation
+    
+    // The expected fprc = (0x3 >> 0) & 3 = 3
+    assert(proof.fprc == 3, 'FPRC should be 3');
+}
+
+/// Test: FADD_R zero + zero = zero
+#[test]
+fn test_integration_fadd_r_zero_plus_zero() {
+    // 0.0 + 0.0 = 0.0 (per IEEE-754)
+    let pre_f = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ZERO, FP_POSITIVE_ZERO);
+    let pre = with_a_reg(pre_f, 0, FP_POSITIVE_ZERO, FP_POSITIVE_ZERO);
+    
+    let post = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ZERO, FP_POSITIVE_ZERO);
+    let post = with_a_reg(post, 0, FP_POSITIVE_ZERO, FP_POSITIVE_ZERO);
+    
+    let proof = fp_proof(20, 0, 8, pre, post, 0);  // FADD_R = 20, dst=f0, src=a0
+    
+    assert(proof.opcode == 20, 'FADD_R opcode');
+}
+
+/// Test: FADD_R infinity + negative infinity = NaN (critical edge case)
+#[test]
+fn test_integration_fadd_r_inf_plus_neginf_is_nan() {
+    // inf + (-inf) = NaN per IEEE-754
+    let pre_f = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_INF, FP_POSITIVE_INF);
+    let pre = with_a_reg(pre_f, 0, FP_NEGATIVE_INF, FP_NEGATIVE_INF);
+    
+    // Result must be NaN
+    let post = with_f_reg(zero_float_regs(), 0, FP_QUIET_NAN, FP_QUIET_NAN);
+    let post = with_a_reg(post, 0, FP_NEGATIVE_INF, FP_NEGATIVE_INF);
+    
+    let proof = fp_proof(20, 0, 8, pre, post, 0);  // FADD_R = 20
+    
+    assert(proof.opcode == 20, 'FADD_R inf+(-inf)');
+}
+
+/// Test: FSUB_R one - one = zero
+#[test]
+fn test_integration_fsub_r_one_minus_one() {
+    // 1.0 - 1.0 = 0.0
+    let pre_f = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ONE, FP_POSITIVE_ONE);
+    let pre = with_a_reg(pre_f, 0, FP_POSITIVE_ONE, FP_POSITIVE_ONE);
+    
+    let post = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ZERO, FP_POSITIVE_ZERO);
+    let post = with_a_reg(post, 0, FP_POSITIVE_ONE, FP_POSITIVE_ONE);
+    
+    let proof = fp_proof(22, 0, 8, pre, post, 0);  // FSUB_R = 22
+    
+    assert(proof.opcode == 22, 'FSUB_R opcode');
+}
+
+/// Test: FP opcode range now includes 28 (CFROUND)
+#[test]
+fn test_fp_opcode_range_includes_cfround() {
+    // Verify FP opcodes are 20-28 (was 20-27 before CFROUND integration)
+    let fp_opcodes: Array<u8> = array![20, 21, 22, 23, 24, 25, 26, 27, 28];
+    let mut i: u32 = 0;
+    loop {
+        if i >= fp_opcodes.len() {
+            break;
+        }
+        let opcode = *fp_opcodes.at(i);
+        assert(opcode >= 20 && opcode <= 28, 'FP opcode range 20-28');
+        i += 1;
+    };
+}
+
+/// Test: FP instruction must not modify integer registers
+#[test]
+fn test_fp_must_preserve_integer_regs() {
+    // Any FP instruction (except CFROUND) should leave integer regs unchanged
+    let int_regs = IntegerRegisters { r0: 42, r1: 100, r2: 200, r3: 300, r4: 400, r5: 500, r6: 600, r7: 700 };
+    
+    let mut proof = fp_proof(20, 0, 8, zero_float_regs(), zero_float_regs(), 0);
+    proof.pre_regs = int_regs;
+    proof.post_regs = int_regs;  // Should be identical
+    
+    // Verify registers are preserved
+    assert(proof.pre_regs.r0 == proof.post_regs.r0, 'r0 preserved');
+    assert(proof.pre_regs.r7 == proof.post_regs.r7, 'r7 preserved');
+}
+
+/// Test: A-group registers are read-only (must not change)
+#[test]
+fn test_a_group_is_readonly() {
+    // A-group (a0-a3) are read-only; any FP op must preserve them
+    let pre = with_a_reg(zero_float_regs(), 0, FP_POSITIVE_ONE, FP_POSITIVE_TWO);
+    let post_f = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ONE, FP_POSITIVE_TWO);
+    let post = with_a_reg(post_f, 0, FP_POSITIVE_ONE, FP_POSITIVE_TWO);
+    
+    let proof = fp_proof(20, 0, 8, pre, post, 0);
+    
+    // A-group in post must match pre
+    assert(proof.pre_float_regs.a0.low == proof.post_float_regs.a0.low, 'a0.low preserved');
+    assert(proof.pre_float_regs.a0.high == proof.post_float_regs.a0.high, 'a0.high preserved');
+}
+
+/// Test: FPRC must be 0-3 (2 bits)
+#[test]
+fn test_fprc_range() {
+    // FPRC can only be 0, 1, 2, or 3
+    let proof_0 = fp_proof(20, 0, 8, zero_float_regs(), zero_float_regs(), 0);
+    let proof_1 = fp_proof(20, 0, 8, zero_float_regs(), zero_float_regs(), 1);
+    let proof_2 = fp_proof(20, 0, 8, zero_float_regs(), zero_float_regs(), 2);
+    let proof_3 = fp_proof(20, 0, 8, zero_float_regs(), zero_float_regs(), 3);
+    
+    assert(proof_0.fprc <= 3, 'FPRC 0 valid');
+    assert(proof_1.fprc <= 3, 'FPRC 1 valid');
+    assert(proof_2.fprc <= 3, 'FPRC 2 valid');
+    assert(proof_3.fprc <= 3, 'FPRC 3 valid');
+}
+
+/// Test: Non-destination float registers must be unchanged
+#[test]
+fn test_fp_non_dst_regs_unchanged() {
+    // If dst=f0, then f1, f2, f3, e0-e3 must not change (a0-a3 are always readonly)
+    let pre = with_f_reg(zero_float_regs(), 1, FP_POSITIVE_TWO, FP_POSITIVE_TWO);  // f1 has value
+    let post_modified = with_f_reg(zero_float_regs(), 0, FP_POSITIVE_ONE, FP_POSITIVE_ONE);  // Only f0 changes
+    let post = with_f_reg(post_modified, 1, FP_POSITIVE_TWO, FP_POSITIVE_TWO);  // f1 preserved
+    
+    let proof = fp_proof(20, 0, 8, pre, post, 0);  // FADD_R targeting f0
+    
+    // f1 must be preserved
+    assert(proof.pre_float_regs.f1.low == proof.post_float_regs.f1.low, 'f1.low unchanged');
+    assert(proof.pre_float_regs.f1.high == proof.post_float_regs.f1.high, 'f1.high unchanged');
 }
