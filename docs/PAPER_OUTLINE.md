@@ -358,7 +358,7 @@ fn sign_extend_32_to_64(val: u32) -> u64 {
 
 ### 4.3 Audit Status
 
-| Component | Auditor | Status |
+| Component | Reviewer | Status |
 |-----------|---------|--------|
 | Serai DEX Pattern | CypherStack | ✅ Audited |
 | Garaga Library | Multiple | ✅ Production |
@@ -832,7 +832,7 @@ Following Permissionless Refereed Tournament design [5]:
 
 ### 9.1 Limitations
 
-**Floating-Point Instructions**: ✅ **COMPLETE** (February 2026). All 9 floating-point instructions (FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R, CFROUND) are now fully verified with witness-based IEEE-754 compliance. The implementation handles all special cases (NaN, infinity, zero, subnormals) deterministically and uses E-mask source validation to prevent manipulation. Approved by independent security auditor for testnet deployment.
+**Floating-Point Instructions**: ✅ **COMPLETE** (February 2026). All 9 floating-point instructions (FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R, CFROUND) are now fully verified with witness-based IEEE-754 compliance. The implementation handles all special cases (NaN, infinity, zero, subnormals) deterministically and uses E-mask source validation to prevent manipulation. Approved by internal security review for testnet deployment.
 
 **Branch Prediction**: CBRANCH is fully integrated with register modification tracking. The verifier maintains per-register modification timestamps to correctly evaluate branch conditions based on when destination registers were last modified, matching the RandomX specification for conditional jump behavior.
 
@@ -1033,9 +1033,9 @@ The proof is zero-knowledge under the Random Oracle Model and sound under the Di
 
 ### D.2 Floating-Point Implementation (February 2026)
 
-**Status: ✅ COMPLETE - Approved for Testnet by Independent Security Auditor**
+**Status: ✅ COMPLETE - Approved for Testnet by internal security review**
 
-Per auditor deep review and final sign-off (February 5, 2026):
+Per reviewer deep review and final sign-off (February 5, 2026):
 
 **Implementation Highlights:**
 - All 9 FP instructions verified: FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R, CFROUND
@@ -1045,7 +1045,7 @@ Per auditor deep review and final sign-off (February 5, 2026):
 - 12 additional normal FP fuzz tests for non-edge-case arithmetic
 - IEEE-754 compliance verified against RandomX specification sections 4.3, 4.3.2, 5.4.1
 
-**Security Assessment (Independent Auditor):**
+**Security Assessment (Independent Reviewer):**
 | Component | Risk Level | Status |
 |-----------|------------|--------|
 | IEEE-754 Edge Cases | LOW | ✅ PASS |
@@ -1055,9 +1055,9 @@ Per auditor deep review and final sign-off (February 5, 2026):
 | Normal FP Range | MEDIUM | ✅ PASS (fuzz tests added) |
 | Witness Validation | LOW | ✅ PASS |
 
-**Auditor Quote:** "monero-vm's FP verifier architecture is among the more sophisticated in the fraud proof space."
+**Review Note:** "monero-vm's FP verifier architecture is among the more sophisticated in the fraud proof space."
 
-Previous auditor notes:
+Previous reviewer notes:
 
 1. **E-group constraint**: Reference implementation builds exponent from scratch (`0x300 | dynamic_bits`), NOT preserving input bits. Our implementation now matches.
 

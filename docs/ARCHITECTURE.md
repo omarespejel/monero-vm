@@ -48,7 +48,7 @@ Pure ZK verification of RandomX is **economically impractical**:
 | Dispute cost | N/A | ~1K constraints |
 | Trust model | Cryptographic | Economic + cryptographic |
 
-**Auditor's verdict**: "Fraud proofs are strongly recommended for production deployment."
+**Reviewer's verdict**: "Fraud proofs are strongly recommended for production deployment."
 
 ---
 
@@ -396,7 +396,7 @@ mod AtomicSwapWithFraudProof {
 
 ### Critical: Collusion Prevention (PRT)
 
-**Attack Identified by Auditor**:
+**Attack Identified by Reviewer**:
 ```
 1. Malicious attester submits false claim
 2. Colluding "challenger" initiates fake dispute

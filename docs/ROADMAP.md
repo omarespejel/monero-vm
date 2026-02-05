@@ -24,7 +24,7 @@ on Starknet, inspired by BitVM's approach for Bitcoin.
 
 ### Phase 1: Feasibility Scoping (COMPLETE - VERDICT: NO-GO FOR PURE ZK)
 
-**Status**: 🔴 **ECONOMICALLY IMPRACTICAL** - Auditor's final assessment.
+**Status**: 🔴 **ECONOMICALLY IMPRACTICAL** - Reviewer's final assessment.
 
 | Task | Status | Output |
 |------|--------|--------|
@@ -32,9 +32,9 @@ on Starknet, inspired by BitVM's approach for Bitcoin.
 | Survey existing FP ZK circuits | ✅ Done | ZKLP limited, Noir has all modes |
 | Analyze constraint costs | ✅ Done | ~6.26B Sierra gas |
 | Scope memory authentication | ✅ Done | S-two handles it fine |
-| **Auditor deep research** | ✅ Done | **DEFINITIVE NO-GO** |
+| **Reviewer deep research** | ✅ Done | **DEFINITIVE NO-GO** |
 
-**Auditor's Final Assessment** (2026-01-31):
+**Reviewer's Final Assessment** (2026-01-31):
 
 | Criterion | Status | Notes |
 |-----------|--------|-------|
@@ -54,7 +54,7 @@ on Starknet, inspired by BitVM's approach for Bitcoin.
 | Range Checks | ~2M | 70 | 140M |
 | **TOTAL** | | | **~6.26B** |
 
-> **Auditor Quote**: "Pure ZK verification of RandomX is technically possible but
+> **Reviewer Quote**: "Pure ZK verification of RandomX is technically possible but
 > economically impractical. A fraud proof or hybrid approach is strongly recommended
 > for production deployment."
 
@@ -67,7 +67,7 @@ on Starknet, inspired by BitVM's approach for Bitcoin.
 | Scope scratchpad proof costs | ✅ Done | **~246M constraints** |
 | Estimate total memory constraints | ✅ Done | **~967M constraints** |
 
-**Memory Analysis (2026-01-31, Auditor Revised)**:
+**Memory Analysis (2026-01-31, Reviewer Revised)**:
 
 | Memory Type | Accesses | Tree Depth | Constraints/Proof | Total |
 |-------------|----------|------------|-------------------|-------|
@@ -79,22 +79,22 @@ on Starknet, inspired by BitVM's approach for Bitcoin.
 **Key Insight**: L1/L2 instruction-level accesses dominate (40% of total), not L3 or Cache.
 This was previously unaccounted for.
 
-**Note on L3 Count**: Auditor says 4,096 (2 random × 2048 iterations). Our earlier 65,536
-included ×8 programs and writes. Auditor's count may be "random reads only" per spec design doc.
+**Note on L3 Count**: Reviewer says 4,096 (2 random × 2048 iterations). Our earlier 65,536
+included ×8 programs and writes. Reviewer's count may be "random reads only" per spec design doc.
 
 **Conclusion**: ~500M constraints is borderline. Need Poseidon benchmark to confirm.
 
 ### Phase 2: Fraud Proof Implementation (CONFIRMED PATH)
 
-**Goal**: Implement optimistic verification - the auditor-recommended approach.
+**Goal**: Implement optimistic verification - the reviewer-recommended approach.
 
 **Timeline**: 2-3 weeks
 
-**Why Fraud Proofs** (Auditor Assessment):
+**Why Fraud Proofs** (Reviewer Assessment):
 - Pure ZK: 10-15 min prover time, ~6.26B gas → ❌ Impractical
 - Fraud proofs: ~1K constraints per dispute → ✅ 1000× cheaper on average
 
-**Auditor-Recommended Approaches**:
+**Reviewer-Recommended Approaches**:
 
 **Option A: Pure Fraud Proof**
 - Execute RandomX natively, only prove disputed segments
@@ -179,7 +179,7 @@ These components are production-ready and serve both trustless and attestation p
 | AesGenerator1R | 14 | ✅ Complete |
 | Merkle proof verification | 19 | ✅ Complete |
 | Dataset item generation | 12 | ✅ Mostly complete |
-| Fraud proof + auditor edge cases | 97+ | ✅ test_randomx_edge_cases.cairo (Sections 1–21) |
+| Fraud proof + reviewer edge cases | 97+ | ✅ test_randomx_edge_cases.cairo (Sections 1–21) |
 
 **Full suite: 561 tests passing** (see [SECURITY_AUDIT_NOTES.md](./SECURITY_AUDIT_NOTES.md) for audit test breakdown)
 
