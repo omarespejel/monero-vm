@@ -184,14 +184,23 @@ monero-vm/
 
 ## Security
 
-### External Audits (RandomX Reference)
+### External Audits Referenced
 
-The RandomX algorithm has been independently audited:
+MoneroVM builds on audited components and follows findings from external security reviews:
 
-| Auditor | Date | Report |
-|---------|------|--------|
-| X41 D-Sec | June 2019 | [Report](https://x41-dsec.de/static/reports/X41-RandomX-Audit-2019-Final-Report-Public.pdf) |
-| Kudelski Security | July 2019 | [Report](https://ostif.org/wp-content/uploads/2019/08/Report-Kudelski-201907022.pdf) |
+#### RandomX Algorithm
+
+| Auditor | Date | Report | Findings Applied |
+|---------|------|--------|------------------|
+| X41 D-Sec | June 2019 | [Report](https://x41-dsec.de/static/reports/X41-RandomX-Audit-2019-Final-Report-Public.pdf) | Memory verification patterns |
+| Trail of Bits | June 2019 | [Report](https://x41-dsec.de/static/reports/X41-RandomX-Audit-2019-Final-Report-Public.pdf) | Merkle proof verification |
+| Kudelski Security | July 2019 | [Report](https://ostif.org/wp-content/uploads/2019/08/Report-Kudelski-201907022.pdf) | IMUL_RCP edge cases, cryptographic validation |
+
+#### Cairo Dependencies
+
+| Component | Source | Audit |
+|-----------|--------|-------|
+| Blake2b | [Herodotus/integrity](https://github.com/HerodotusDev/integrity) | [zksecurity audit](https://github.com/HerodotusDev/integrity/tree/main/audit) |
 
 ### Implementation Notes
 
