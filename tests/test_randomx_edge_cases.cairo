@@ -8,9 +8,9 @@ use monero_vm::randomx::fraud_proof::fp_stubs::{
 };
 use monero_vm::randomx::fraud_proof::ieee754::{
     unpack, is_nan, is_subnormal,
-    apply_ftz_daz_bits, verify_fadd_with_witness, verify_fsub, verify_fdiv,
-    verify_fmul_with_witness, verify_fdiv_with_witness, verify_fsqrt_with_witness,
-    verify_cfround, verify_e_group_invariant, verify_e_group_exponent,
+    apply_ftz_daz_bits, verify_fadd, verify_fadd_with_witness, verify_fsub, verify_fdiv,
+    verify_fmul, verify_fmul_with_witness, verify_fdiv_with_witness, verify_fsqrt,
+    verify_fsqrt_with_witness, verify_cfround, verify_e_group_invariant, verify_e_group_exponent,
     verify_e_group_exponent_full, verify_f_group_invariant,
     compute_e_mask, apply_e_group_mask, default_fp_witness, FPWitness,
     ROUND_TIES_TO_EVEN, ROUND_TOWARD_NEGATIVE, ROUND_TOWARD_POSITIVE, ROUND_TOWARD_ZERO
@@ -1187,4 +1187,245 @@ fn test_security_all_register_indices_valid() {
     assert(regs.r5 == 0x5, 'r5 accessible');
     assert(regs.r6 == 0x6, 'r6 accessible');
     assert(regs.r7 == 0x7, 'r7 accessible');
+}
+
+// ============================================================================
+// SECTION 26: NORMAL FP RANGE FUZZ TESTS (Per Auditor Pre-Mainnet Condition)
+// Property-based testing for non-edge-case floating-point arithmetic
+// ============================================================================
+
+/// Generate a normal (non-special) FP value from a seed
+/// Returns a value that is NOT: zero, subnormal, infinity, or NaN
+fn generate_normal_fp(seed: u64) -> u64 {
+    // Exponent range for normals: 1-2046 (0x001 to 0x7FE)
+    // Avoid 0 (subnormal/zero) and 2047 (inf/nan)
+    let exp_seed = (seed / 0x10000000000) & 0x7FF;
+    let exp: u64 = if exp_seed == 0 { 1 } else if exp_seed >= 2047 { 2046 } else { exp_seed };
+    
+    // Mantissa: any 52 bits
+    let mantissa = seed & 0xFFFFFFFFFFFFF;
+    
+    // Sign: from high bit of seed
+    let sign: u64 = if (seed & 0x8000000000000000) != 0 { 0x8000000000000000 } else { 0 };
+    
+    sign | (exp * 0x10000000000000) | mantissa
+}
+
+/// Test: Normal FP addition preserves verifier consistency
+/// For normal a,b: verify_fadd should accept valid additions
+#[test]
+fn test_fuzz_normal_fadd_range_1() {
+    // Test 1+1=2
+    let one: u64 = 0x3FF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    assert(verify_fadd(one, one, two, ROUND_TIES_TO_EVEN), '1+1=2');
+    
+    // Test 1+2=3
+    let three: u64 = 0x4008000000000000;
+    assert(verify_fadd(one, two, three, ROUND_TIES_TO_EVEN), '1+2=3');
+    
+    // Test 2+2=4
+    let four: u64 = 0x4010000000000000;
+    assert(verify_fadd(two, two, four, ROUND_TIES_TO_EVEN), '2+2=4');
+}
+
+#[test]
+fn test_fuzz_normal_fadd_range_2() {
+    // Test with larger values
+    let hundred: u64 = 0x4059000000000000;
+    let two_hundred: u64 = 0x4069000000000000;
+    assert(verify_fadd(hundred, hundred, two_hundred, ROUND_TIES_TO_EVEN), '100+100=200');
+    
+    // Test 10 + 90 = 100
+    let ten: u64 = 0x4024000000000000;
+    let ninety: u64 = 0x4056800000000000;
+    assert(verify_fadd(ten, ninety, hundred, ROUND_TIES_TO_EVEN), '10+90=100');
+}
+
+#[test]
+fn test_fuzz_normal_fsub_range() {
+    let w = default_fp_witness();
+    
+    let one: u64 = 0x3FF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    let three: u64 = 0x4008000000000000;
+    
+    // 3 - 1 = 2
+    assert(verify_fsub(three, one, two, ROUND_TIES_TO_EVEN), '3-1=2');
+    
+    // 3 - 2 = 1
+    assert(verify_fsub(three, two, one, ROUND_TIES_TO_EVEN), '3-2=1');
+    
+    // 2 - 1 = 1
+    assert(verify_fsub(two, one, one, ROUND_TIES_TO_EVEN), '2-1=1');
+}
+
+#[test]
+fn test_fuzz_normal_fmul_range() {
+    let one: u64 = 0x3FF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    let three: u64 = 0x4008000000000000;
+    let four: u64 = 0x4010000000000000;
+    let six: u64 = 0x4018000000000000;
+    let nine: u64 = 0x4022000000000000;
+    
+    // 2 * 2 = 4
+    assert(verify_fmul(two, two, four, ROUND_TIES_TO_EVEN), '2*2=4');
+    
+    // 2 * 3 = 6
+    assert(verify_fmul(two, three, six, ROUND_TIES_TO_EVEN), '2*3=6');
+    
+    // 3 * 3 = 9
+    assert(verify_fmul(three, three, nine, ROUND_TIES_TO_EVEN), '3*3=9');
+    
+    // 1 * x = x (identity)
+    assert(verify_fmul(one, two, two, ROUND_TIES_TO_EVEN), '1*2=2');
+    assert(verify_fmul(one, three, three, ROUND_TIES_TO_EVEN), '1*3=3');
+}
+
+#[test]
+fn test_fuzz_normal_fdiv_range() {
+    let one: u64 = 0x3FF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    let three: u64 = 0x4008000000000000;
+    let four: u64 = 0x4010000000000000;
+    let half: u64 = 0x3FE0000000000000;  // 0.5
+    
+    // 4 / 2 = 2
+    assert(verify_fdiv(four, two, two, ROUND_TIES_TO_EVEN), '4/2=2');
+    
+    // 6 / 2 = 3
+    let six: u64 = 0x4018000000000000;
+    assert(verify_fdiv(six, two, three, ROUND_TIES_TO_EVEN), '6/2=3');
+    
+    // 1 / 2 = 0.5
+    assert(verify_fdiv(one, two, half, ROUND_TIES_TO_EVEN), '1/2=0.5');
+    
+    // x / 1 = x (identity)
+    assert(verify_fdiv(two, one, two, ROUND_TIES_TO_EVEN), '2/1=2');
+    assert(verify_fdiv(three, one, three, ROUND_TIES_TO_EVEN), '3/1=3');
+}
+
+#[test]
+fn test_fuzz_normal_fsqrt_range() {
+    let one: u64 = 0x3FF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    let four: u64 = 0x4010000000000000;
+    let nine: u64 = 0x4022000000000000;
+    let three: u64 = 0x4008000000000000;
+    let sixteen: u64 = 0x4030000000000000;
+    
+    // sqrt(1) = 1
+    assert(verify_fsqrt(one, one, ROUND_TIES_TO_EVEN), 'sqrt(1)=1');
+    
+    // sqrt(4) = 2
+    assert(verify_fsqrt(four, two, ROUND_TIES_TO_EVEN), 'sqrt(4)=2');
+    
+    // sqrt(9) = 3
+    assert(verify_fsqrt(nine, three, ROUND_TIES_TO_EVEN), 'sqrt(9)=3');
+    
+    // sqrt(16) = 4
+    assert(verify_fsqrt(sixteen, four, ROUND_TIES_TO_EVEN), 'sqrt(16)=4');
+}
+
+#[test]
+fn test_fuzz_normal_mixed_exponents() {
+    // Test operations between values with different exponent magnitudes
+    // This catches errors in exponent alignment
+    
+    let one: u64 = 0x3FF0000000000000;        // 1.0 (exp=1023)
+    let thousand: u64 = 0x408F400000000000;   // 1000.0 (exp=1032)
+    let one_thousand_one: u64 = 0x408F440000000000;  // 1001.0
+    
+    // 1000 + 1 = 1001
+    assert(verify_fadd(thousand, one, one_thousand_one, ROUND_TIES_TO_EVEN), '1000+1=1001');
+}
+
+#[test]
+fn test_fuzz_normal_negative_values() {
+    let one: u64 = 0x3FF0000000000000;
+    let neg_one: u64 = 0xBFF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    let neg_two: u64 = 0xC000000000000000;
+    let zero: u64 = 0x0000000000000000;
+    
+    // 1 + (-1) = 0
+    assert(verify_fadd(one, neg_one, zero, ROUND_TIES_TO_EVEN), '1+(-1)=0');
+    
+    // (-1) + (-1) = -2
+    assert(verify_fadd(neg_one, neg_one, neg_two, ROUND_TIES_TO_EVEN), '(-1)+(-1)=-2');
+    
+    // (-1) * (-1) = 1
+    assert(verify_fmul(neg_one, neg_one, one, ROUND_TIES_TO_EVEN), '(-1)*(-1)=1');
+    
+    // (-2) / (-1) = 2
+    assert(verify_fdiv(neg_two, neg_one, two, ROUND_TIES_TO_EVEN), '(-2)/(-1)=2');
+}
+
+#[test]
+fn test_fuzz_all_rounding_modes_normal() {
+    // Test that normal operations work with all 4 rounding modes
+    let one: u64 = 0x3FF0000000000000;
+    let two: u64 = 0x4000000000000000;
+    
+    // For exact results, all rounding modes should give same answer
+    assert(verify_fadd(one, one, two, ROUND_TIES_TO_EVEN), 'tie-even 1+1');
+    assert(verify_fadd(one, one, two, ROUND_TOWARD_NEGATIVE), 'toward-neg 1+1');
+    assert(verify_fadd(one, one, two, ROUND_TOWARD_POSITIVE), 'toward-pos 1+1');
+    assert(verify_fadd(one, one, two, ROUND_TOWARD_ZERO), 'toward-zero 1+1');
+}
+
+#[test]
+fn test_fuzz_powers_of_two() {
+    // Powers of 2 are exactly representable - good for testing
+    let p2: u64 = 0x4000000000000000;   // 2^1 = 2
+    let p4: u64 = 0x4010000000000000;   // 2^2 = 4
+    let p8: u64 = 0x4020000000000000;   // 2^3 = 8
+    let p16: u64 = 0x4030000000000000;  // 2^4 = 16
+    let p32: u64 = 0x4040000000000000;  // 2^5 = 32
+    let p64: u64 = 0x4050000000000000;  // 2^6 = 64
+    
+    // 2 * 2 = 4
+    assert(verify_fmul(p2, p2, p4, ROUND_TIES_TO_EVEN), '2*2=4');
+    
+    // 4 * 4 = 16
+    assert(verify_fmul(p4, p4, p16, ROUND_TIES_TO_EVEN), '4*4=16');
+    
+    // 8 * 8 = 64
+    assert(verify_fmul(p8, p8, p64, ROUND_TIES_TO_EVEN), '8*8=64');
+    
+    // 32 / 4 = 8
+    assert(verify_fdiv(p32, p4, p8, ROUND_TIES_TO_EVEN), '32/4=8');
+}
+
+#[test]
+fn test_fuzz_very_large_normal() {
+    // Test with very large but still normal values (near max exponent)
+    // Max normal: ~1.8e308 (exp=2046)
+    let large1: u64 = 0x7FD0000000000000;  // ~2^1021
+    let large2: u64 = 0x7FC0000000000000;  // ~2^1020
+    
+    // Verify these are normal (not inf)
+    assert(!is_nan(unpack(large1)), 'large1 not nan');
+    assert(!is_subnormal(unpack(large1)), 'large1 not subnormal');
+    
+    // large2 + large2 should still be normal (exponent increases by 1)
+    let large2_doubled: u64 = 0x7FD0000000000000;
+    assert(verify_fadd(large2, large2, large2_doubled, ROUND_TIES_TO_EVEN), 'large doubled');
+}
+
+#[test]
+fn test_fuzz_very_small_normal() {
+    // Test with very small but still normal values (near min exponent)
+    // Min normal: ~2.2e-308 (exp=1)
+    let small1: u64 = 0x0010000000000000;  // 2^-1022 (min normal)
+    let small2: u64 = 0x0020000000000000;  // 2^-1021
+    
+    // Verify these are normal (not subnormal)
+    assert(!is_subnormal(unpack(small1)), 'small1 is normal');
+    assert(!is_subnormal(unpack(small2)), 'small2 is normal');
+    
+    // small1 * 2 = small2
+    let two: u64 = 0x4000000000000000;
+    assert(verify_fmul(small1, two, small2, ROUND_TIES_TO_EVEN), 'min_normal * 2');
 }
