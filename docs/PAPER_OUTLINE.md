@@ -12,7 +12,7 @@
 
 Cross-chain interoperability with privacy-preserving cryptocurrencies presents significant challenges due to transaction graph opacity and computationally intensive proof-of-work verification. Monero's combination of ring signatures, stealth addresses, and the ASIC-resistant RandomX algorithm creates unique barriers for trustless bridges to smart contract platforms. While trustless Bitcoin-Monero atomic swaps exist using adaptor signatures (COMIT Network, 2021), no prior work has extended these techniques to smart contract platforms with on-chain cryptographic verification.
 
-We present MoneroVM, the first implementation of Monero atomic swaps on a smart contract platform, enabling trustless XMR ↔ Starknet token exchange with on-chain DLEQ proof verification. Our framework addresses two complementary problems: (1) trustless atomic swaps using Discrete Logarithm Equality (DLEQ) proofs verified on-chain via the Garaga cryptographic library, and (2) the first fraud-proof-based approach to Monero light client verification. For atomic swaps, we implement a two-party key generation protocol using the Serai DEX pattern, achieving trustless execution with a 3-hour timelock minimum, validated through 622 comprehensive tests.
+We present MoneroVM, the first implementation of Monero atomic swaps on a smart contract platform, enabling trustless XMR ↔ Starknet token exchange with on-chain DLEQ proof verification. Our framework addresses two complementary problems: (1) trustless atomic swaps using Discrete Logarithm Equality (DLEQ) proofs verified on-chain via the Garaga cryptographic library, and (2) the first fraud-proof-based approach to Monero light client verification. For atomic swaps, we implement a two-party key generation protocol using the Serai DEX pattern, achieving trustless execution with a 3-hour timelock minimum, validated through 644 comprehensive tests.
 
 For scenarios requiring state verification without counterparty cooperation, we present the first comprehensive feasibility analysis of RandomX verification in zero-knowledge systems. We demonstrate that pure ZK proof generation for RandomX's 29-instruction virtual machine exceeds current ZK-STARK capabilities (~6.26 billion Sierra gas, ~$626/hash), establishing fraud proofs as the economically viable alternative. MoneroVM provides ~387K gas per instruction verification through optimistic verification with bisection-based dispute resolution. Our work extends the Monero interoperability landscape from peer-to-peer swaps to smart contract platforms, opening new possibilities for DeFi integration.
 
@@ -363,7 +363,7 @@ fn sign_extend_32_to_64(val: u32) -> u64 {
 | Serai DEX Pattern | CypherStack | ✅ Audited |
 | Garaga Library | Multiple | ✅ Production |
 | RandomX Reference | X41 D-Sec, Kudelski | ✅ Audited |
-| MoneroVM Verifiers | Internal | ✅ 622 tests |
+| MoneroVM Verifiers | Internal | ✅ 644 tests |
 
 ---
 
@@ -754,7 +754,7 @@ Following Permissionless Refereed Tournament design [5]:
 | Total swap gas (happy path) | ~200K |
 | Timelock minimum | 3 hours |
 | Rust test coverage | 136+ tests |
-| Cairo test coverage | 622 tests |
+| Cairo test coverage | 644 tests |
 | Security issues found | 3 (all fixed) |
 
 ### 7.2 Fraud Proof Performance
@@ -790,7 +790,8 @@ Following Permissionless Refereed Tournament design [5]:
 | Cache Commitment | 19 | ✅ |
 | Memory/CBRANCH Integration | 226 | ✅ |
 | Edge Cases & Security | 13 | ✅ |
-| **Total** | **622** | ✅ |
+| FP Verifiers & Fuzz Tests | 22 | ✅ |
+| **Total** | **644** | ✅ |
 
 ---
 
@@ -841,10 +842,11 @@ Following Permissionless Refereed Tournament design [5]:
 ### 9.2 Future Work
 
 1. **Complete Instruction Coverage**: ✅ **DONE** - All 29 RandomX instructions now have complete verifiers including all 9 FP instructions
-2. **Mainnet Deployment**: Deploy AtomicLock and ChallengeContract on Starknet mainnet
-3. **Wallet Integration**: Develop Monero wallet plugins for automated swap execution
-4. **Prover Network**: Design incentive mechanism for decentralized proof generation
-5. **Cross-Chain Extension**: Extend protocol to other privacy coins and L2s
+2. **Testnet Deployment**: ✅ **DONE** - ChallengeContract deployed to Starknet Sepolia ([0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea](https://sepolia.starkscan.co/contract/0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea))
+3. **Mainnet Deployment**: Deploy AtomicLock and ChallengeContract on Starknet mainnet
+4. **Wallet Integration**: Develop Monero wallet plugins for automated swap execution
+5. **Prover Network**: Design incentive mechanism for decentralized proof generation
+6. **Cross-Chain Extension**: Extend protocol to other privacy coins and L2s
 
 ### 9.3 Economic Considerations
 
@@ -1074,7 +1076,7 @@ Previous reviewer notes:
 - Quarkslab RandomX Audit (July 2019): Full VM semantics verified
 - Trail of Bits RandomX Audit (July 2019): Noted VM complexity
 - CypherStack Serai DEX Audit: Two-party key gen pattern approved
-- Internal MoneroVM Review: 622 tests, 100% coverage of all instruction verifiers including CBRANCH and memory operations
+- Internal MoneroVM Review: 644 tests, 100% coverage of all instruction verifiers including CBRANCH and memory operations
 
 ### D.4 External Audit Key Quotes
 
