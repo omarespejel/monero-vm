@@ -226,6 +226,18 @@ scarb fmt --check
 
 ---
 
+## Related Projects
+
+| Repository | Description |
+|------------|-------------|
+| [monero-starknet-atomic-swap](https://github.com/omarespejel/monero-starknet-atomic-swap) | Atomic swap protocol: DLEQ proofs, two-party key generation, AtomicLock contract |
+
+**Together these repos enable trustless Monero ↔ Starknet atomic swaps:**
+- **monero-starknet-atomic-swap**: Handles the swap protocol (adaptor signatures, hashlock contracts)
+- **monero-vm**: Verifies RandomX computation disputes (fraud proofs for Monero block validation)
+
+---
+
 ## References
 
 - [RandomX Specification](https://github.com/tevador/RandomX/blob/master/doc/specs.md)
