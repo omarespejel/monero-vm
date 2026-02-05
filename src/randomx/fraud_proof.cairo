@@ -1543,19 +1543,22 @@ pub mod memory_verifiers {
     /// Per RandomX spec section 5.5.1:
     /// - Address calculated from DST register (not src!)
     /// - Value written is from SRC register
-    /// - Scratchpad level determined by mod.cond
+    /// - Scratchpad level determined by mod.cond AND mod.mem
+    /// 
+    /// Per auditor HIGH-2 fix: Now properly uses mod_mem for L1/L2 selection
     pub fn verify_istore(
         pre_state: RandomXState,
         dst_idx: u8,
         src_idx: u8,
         imm32: u32,
         mod_cond: u8,
+        mod_mem: u8,
         witness: StoreWitness,
         post_scratchpad_root: felt252
     ) -> bool {
         // 1. Compute memory address from DST (per auditor clarification)
         let dst_val = get_register(pre_state.registers.int_regs, dst_idx);
-        let addr = compute_scratchpad_address_with_level(dst_val, imm32, mod_cond);
+        let addr = compute_scratchpad_address_with_level(dst_val, imm32, mod_cond, mod_mem);
         
         // 2. Verify old value exists at address via Merkle proof
         let old_witness = MemoryWitness {
@@ -1616,23 +1619,28 @@ pub mod memory_verifiers {
     }
     
     /// Compute scratchpad address with level selection
-    /// mod.cond >= 14: L3 (full 2MB)
-    /// mod.cond < 14: L1/L2 based on mod.mem
-    fn compute_scratchpad_address_with_level(dst: u64, imm32: u32, mod_cond: u8) -> u32 {
+    /// Per auditor HIGH-2: Must properly select L1/L2/L3 based on mod.cond AND mod.mem
+    /// - mod.cond >= 14: L3 with 64-byte alignment (full 2MB)
+    /// - mod.cond < 14, mod.mem != 0: L1 (16KB)
+    /// - mod.cond < 14, mod.mem == 0: L2 (256KB)
+    fn compute_scratchpad_address_with_level(dst: u64, imm32: u32, mod_cond: u8, mod_mem: u8) -> u32 {
         let imm64: u64 = sign_extend_32_to_64(imm32);
         let raw_addr = wrapping_add_64(dst, imm64);
         
-        // Select mask based on mod.cond
-        let mask: u64 = if mod_cond >= 14 {
-            SCRATCHPAD_L3_MASK  // 2MB - 8
+        // Select mask based on level (using get_scratchpad_level_for_store logic)
+        let (mask, alignment): (u64, u64) = if mod_cond >= 14 {
+            // L3 with 64-byte alignment
+            (SCRATCHPAD_L3_MASK_64, 64)
+        } else if mod_mem != 0 {
+            // L1: 16KB with 8-byte alignment
+            (SCRATCHPAD_L1_MASK, 8)
         } else {
-            // L1/L2 - simplified to L3 for MVP
-            // Full implementation would check mod.mem for L1 (16KB) vs L2 (256KB)
-            SCRATCHPAD_L3_MASK
+            // L2: 256KB with 8-byte alignment
+            (SCRATCHPAD_L2_MASK, 8)
         };
         
         let addr = raw_addr & mask;
-        (addr / 64).try_into().unwrap()
+        (addr / alignment).try_into().unwrap()
     }
     
     // ========================================================================

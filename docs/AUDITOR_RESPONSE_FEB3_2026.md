@@ -15,12 +15,14 @@ Thank you for the thorough security audit. This document addresses each finding 
 - Remediation actions taken or planned
 - Questions requiring clarification
 
-**Summary of Actions Taken Today (10 commits)**:
+**Summary of Actions Taken Today (12+ commits)**:
 - Fixed event emission order vulnerability
 - Integrated instruction verifiers into challenge contract  
 - Added replay protection for duplicate challenges
 - Implemented proper bisection disagreement detection
 - Added 17 new security/TDD tests
+- **HIGH-1 FIX**: Implemented missing `verify_ismulh_m` verifier
+- **HIGH-2 FIX**: Fixed L1/L2 store mask selection in `compute_scratchpad_address_with_level`
 
 ---
 
@@ -130,27 +132,27 @@ pub fn verify_imul_rcp_full(
 
 ---
 
-### HIGH-1: Missing ISMULH_M Verifier
+### HIGH-1: Missing ISMULH_M Verifier ✅ FIXED
 
 **Your Finding**: Signed high multiplication with memory operand cannot be verified.
 
-**Our Response**: You are correct. We have:
-- `verify_imulh_m` (UNSIGNED) ✅
-- `verify_ismulh_m` (SIGNED) ❌ MISSING
+**Our Response**: You were correct. This has now been **IMPLEMENTED**.
 
-**Current Memory Verifiers**:
+**Current Memory Verifiers** (ALL COMPLETE):
 ```
 verify_iadd_m   ✅
 verify_isub_m   ✅
 verify_imul_m   ✅
 verify_imulh_m  ✅ (unsigned)
-verify_ismulh_m ❌ MISSING (signed)
+verify_ismulh_m ✅ IMPLEMENTED (signed)
 verify_ixor_m   ✅
 ```
 
-**ACTION REQUIRED**: Implement `verify_ismulh_m` following pattern:
+**Implemented Code** (fraud_proof.cairo lines 1449-1485):
 
 ```cairo
+/// Verify ISMULH_M: dst = (dst * [mem]) >> 64 (SIGNED high multiplication)
+/// Per auditor: This was missing - opcode 16 in RandomX
 pub fn verify_ismulh_m(
     pre_state: RandomXState,
     dst_idx: u8,
@@ -167,60 +169,66 @@ pub fn verify_ismulh_m(
     }
     
     let dst_val = get_register(pre_state.registers.int_regs, dst_idx);
-    let mem_val = witness.value;
-    
-    // Use SIGNED multiply high (ismulh_i64 instead of umul_hi)
-    let expected = ismulh_i64(to_i64(dst_val), to_i64(mem_val));
+    // Use SIGNED multiply high (ismulh_i64) instead of unsigned (imulh_u64)
+    let dst_signed = to_i64(dst_val);
+    let mem_signed = to_i64(witness.value);
+    let result_signed = ismulh_i64(dst_signed, mem_signed);
+    let expected = from_i64(result_signed);
     
     let post_dst = get_register(post_regs, dst_idx);
-    if post_dst != from_i64(expected) {
+    if post_dst != expected {
         return false;
     }
+    
     verify_other_registers_unchanged(pre_state.registers.int_regs, post_regs, dst_idx)
 }
 ```
 
-**QUESTION FOR AUDITOR**: Do you want us to implement and commit this fix immediately, or include it in the next audit cycle?
+**Commit**: Implemented in this audit response session
 
 ---
 
-### HIGH-2: L1/L2 Store Mask Selection Simplified
+### HIGH-2: L1/L2 Store Mask Selection Simplified ✅ FIXED
 
 **Your Finding**: `compute_scratchpad_address_with_level` always uses L3 mask.
 
-**Our Response**: Partially correct. We have the proper logic in `get_scratchpad_level_for_store()` but it's NOT USED:
+**Our Response**: This has now been **FIXED**. 
 
-**Proper Implementation EXISTS** (lines 1282-1292):
+**Implementation** (fraud_proof.cairo lines 1618-1640):
+
 ```cairo
-pub fn get_scratchpad_level_for_store(mod_cond: u8, mod_mem: u8) -> ScratchpadLevel {
-    if mod_cond >= STORE_L3_CONDITION {
-        ScratchpadLevel::L3_64  // mod_cond >= 14 forces L3 with 64-byte alignment
+/// Compute scratchpad address with level selection
+/// Per auditor HIGH-2: Must properly select L1/L2/L3 based on mod.cond AND mod.mem
+/// - mod.cond >= 14: L3 with 64-byte alignment (full 2MB)
+/// - mod.cond < 14, mod.mem != 0: L1 (16KB)
+/// - mod.cond < 14, mod.mem == 0: L2 (256KB)
+fn compute_scratchpad_address_with_level(dst: u64, imm32: u32, mod_cond: u8, mod_mem: u8) -> u32 {
+    let imm64: u64 = sign_extend_32_to_64(imm32);
+    let raw_addr = wrapping_add_64(dst, imm64);
+    
+    // Select mask based on level (using get_scratchpad_level_for_store logic)
+    let (mask, alignment): (u64, u64) = if mod_cond >= 14 {
+        // L3 with 64-byte alignment
+        (SCRATCHPAD_L3_MASK_64, 64)
     } else if mod_mem != 0 {
-        // mod_mem != 0 → L1
-        ScratchpadLevel::L1
+        // L1: 16KB with 8-byte alignment
+        (SCRATCHPAD_L1_MASK, 8)
     } else {
-        // mod_mem == 0 → L2
-        ScratchpadLevel::L2
-    }
-}
-```
-
-**But the address computation is simplified** (lines 1589-1604):
-```cairo
-fn compute_scratchpad_address_with_level(dst: u64, imm32: u32, mod_cond: u8) -> u32 {
-    // ...
-    let mask: u64 = if mod_cond >= 14 {
-        SCRATCHPAD_L3_MASK
-    } else {
-        // L1/L2 - simplified to L3 for MVP
-        // Full implementation would check mod.mem for L1 (16KB) vs L2 (256KB)
-        SCRATCHPAD_L3_MASK  // ← BUG: Should use proper mask
+        // L2: 256KB with 8-byte alignment
+        (SCRATCHPAD_L2_MASK, 8)
     };
-    // ...
+    
+    let addr = raw_addr & mask;
+    (addr / alignment).try_into().unwrap()
 }
 ```
 
-**ACTION REQUIRED**: Refactor `compute_scratchpad_address_with_level` to accept `mod_mem` parameter and use `get_scratchpad_level_for_store()`.
+**Changes Made**:
+1. Added `mod_mem: u8` parameter to function signature
+2. Implemented proper L1/L2/L3 mask selection based on RandomX spec
+3. Updated `verify_istore` to pass `mod_mem` parameter
+
+**Commit**: Implemented in this audit response session
 
 ---
 
