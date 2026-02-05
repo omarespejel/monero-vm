@@ -407,7 +407,7 @@ fn test_imul_rcp_nop_imm32_power_of_2() {
 
 #[test]
 fn test_imul_rcp_reciprocal_3() {
-    // Reference: reciprocal(3) = 0xAAAAAAAAAAAAAAAB (RandomX reciprocal.c)
+    // Reference: reciprocal(3) = 0xAAAAAAAAAAAAAAAA (RandomX reciprocal.c)
     let rcp = compute_reciprocal(3);
     assert(rcp != 0, 'rcp(3) non-zero');
 }
@@ -1078,35 +1078,52 @@ fn test_security_imul_rcp_full_power_of_2_boundary() {
 
 #[test]
 fn test_security_compute_reciprocal_known_vectors() {
-    // Per RandomX reciprocal.c reference vectors
+    // Per RandomX reciprocal.c reference implementation:
+    // result = (q << shift) + ((r << shift) / divisor)
+    // where q = 2^63 / divisor, r = 2^63 % divisor
+    // and shift = 64 - clzll(divisor) = 32 - clz32(divisor)
     
-    // reciprocal(3) = 0xAAAAAAAAAAAAAAAB
+    // reciprocal(3): shift=2, q=3074457345618258602, r=2
+    // result = q*4 + 8/3 = 12297829382473034408 + 2 = 0xAAAAAAAAAAAAAAAA
     let rcp_3 = compute_reciprocal(3);
-    assert(rcp_3 == 0xAAAAAAAAAAAAAAAB, 'rcp(3) exact');
+    assert(rcp_3 == 0xAAAAAAAAAAAAAAAA, 'rcp(3) exact');
     
-    // reciprocal(7) = 0x2492492492492493
+    // reciprocal(7): shift=3, q=1317624576693539401, r=1
+    // result = q*8 + 8/7 = 10540996613548315208 + 1 = 0x9249249249249249
     let rcp_7 = compute_reciprocal(7);
-    assert(rcp_7 == 0x2492492492492493, 'rcp(7) exact');
+    assert(rcp_7 == 0x9249249249249249, 'rcp(7) exact');
     
-    // reciprocal(13) = 0x4EC4EC4EC4EC4EC5
+    // reciprocal(13): shift=4, q=709490156681136600, r=8
+    // result = q*16 + 128/13 = 11351842506898185600 + 9 = 0x9D89D89D89D89D89
     let rcp_13 = compute_reciprocal(13);
-    assert(rcp_13 == 0x4EC4EC4EC4EC4EC5, 'rcp(13) exact');
+    assert(rcp_13 == 0x9D89D89D89D89D89, 'rcp(13) exact');
 }
 
 #[test]
 fn test_security_compute_reciprocal_max_u32() {
-    // Edge case: Maximum 32-bit divisor
-    // reciprocal(0xFFFFFFFF) = 0x100000001
+    // Edge case: Maximum 32-bit divisor (0xFFFFFFFF = 4294967295)
+    // q = 2^63 / 0xFFFFFFFF = 2147483648 = 0x80000000
+    // r = 2^63 % 0xFFFFFFFF = 2147483648
+    // shift = 32 - clz32(0xFFFFFFFF) = 32 - 0 = 32
+    // (q << 32) = 0x8000000000000000
+    // (r << 32) = 0x8000000000000000 = 2^63
+    // (r << 32) / 0xFFFFFFFF = 2^63 / 0xFFFFFFFF = 2147483648 = 0x80000000
+    // result = 0x8000000000000000 + 0x80000000 = 0x8000000080000000
     let rcp_max = compute_reciprocal(0xFFFFFFFF);
-    assert(rcp_max == 0x100000001, 'rcp(max) exact');
+    assert(rcp_max == 0x8000000080000000, 'rcp(max) exact');
 }
 
 #[test]
 fn test_security_compute_reciprocal_near_max() {
-    // Edge case: Near maximum 32-bit divisor
-    // reciprocal(0xFFFFFFFE) = 0x100000002
+    // Edge case: Near maximum 32-bit divisor (0xFFFFFFFE = 4294967294)
+    // q = 2^63 / 0xFFFFFFFE = 2147483649
+    // r = 2^63 % 0xFFFFFFFE = 2
+    // shift = 32 - clz32(0xFFFFFFFE) = 32 - 0 = 32
+    // (q << 32) = 0x8000000100000000 
+    // (r << 32) / 0xFFFFFFFE = (2 * 2^32) / 0xFFFFFFFE = 2
+    // result = 0x8000000100000000 + 2 = 0x8000000100000002
     let rcp_near_max = compute_reciprocal(0xFFFFFFFE);
-    assert(rcp_near_max == 0x100000002, 'rcp(max-1) exact');
+    assert(rcp_near_max == 0x8000000100000002, 'rcp(max-1) exact');
 }
 
 // ============================================================================
