@@ -20,7 +20,7 @@ MoneroVM is the first implementation of RandomX fraud proof verification on a sm
 
 | Network | Contract Address |
 |---------|------------------|
-| **Starknet Sepolia** | [`0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea`](https://sepolia.starkscan.co/contract/0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea) |
+| **Starknet Sepolia** | [`0x034ee50aa710e360c793ec9a989438c9f790be90dbc19b2c302ade5263f835b6`](https://sepolia.starkscan.co/contract/0x034ee50aa710e360c793ec9a989438c9f790be90dbc19b2c302ade5263f835b6) |
 
 ---
 
@@ -119,13 +119,13 @@ snforge test
 ```bash
 # Check challenge count
 sncast call \
-  --contract-address 0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea \
+  --contract-address 0x034ee50aa710e360c793ec9a989438c9f790be90dbc19b2c302ade5263f835b6 \
   --function get_challenge_count \
   --network sepolia
 
 # Open a challenge (requires funded account)
 sncast invoke \
-  --contract-address 0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea \
+  --contract-address 0x034ee50aa710e360c793ec9a989438c9f790be90dbc19b2c302ade5263f835b6 \
   --function open_challenge \
   --arguments 'DEFENDER, DEFENDER_HASH, DEFENDER_TRACE, CHALLENGER_HASH, CHALLENGER_TRACE' \
   --network sepolia
