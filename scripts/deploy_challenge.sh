@@ -16,7 +16,9 @@ echo "✅ sncast found: $(sncast --version)"
 echo ""
 
 # RPC URL - Starknet Sepolia
-RPC_URL="${STARKNET_RPC_URL:-https://starknet-sepolia.public.blastapi.io/rpc/v0_7}"
+# Note: Blast API was discontinued. Default to Alchemy's free public demo endpoint.
+# For production, set STARKNET_RPC_URL to your own Alchemy/Infura/Nethermind key.
+RPC_URL="${STARKNET_RPC_URL:-https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/demo}"
 echo "📡 Using RPC: $RPC_URL"
 echo ""
 
@@ -66,11 +68,27 @@ echo ""
 echo "✅ Class Hash: $CLASS_HASH"
 echo ""
 
-# Deploy contract (no constructor args for ChallengeContract)
+# Deploy contract with owner constructor arg
+# The owner address defaults to the deployer account address.
+# Override with OWNER_ADDRESS env var if needed.
+OWNER_ADDRESS="${OWNER_ADDRESS:-}"
+
+if [ -z "$OWNER_ADDRESS" ]; then
+  echo "ℹ️  No OWNER_ADDRESS set. Fetching deployer account address..."
+  OWNER_ADDRESS=$(sncast account info --name "$ACCOUNT_NAME" --url "$RPC_URL" 2>&1 | grep -oE '0x[a-fA-F0-9]+' | head -1) || true
+  if [ -z "$OWNER_ADDRESS" ]; then
+    echo "❌ Could not determine owner address. Set OWNER_ADDRESS env var manually."
+    echo "   Example: OWNER_ADDRESS=0xYOUR_ADDRESS ./scripts/deploy_challenge.sh"
+    exit 1
+  fi
+fi
+
 echo "🚀 Deploying contract instance..."
+echo "   Owner: $OWNER_ADDRESS"
 
 DEPLOY_OUTPUT=$(sncast deploy \
   --class-hash "$CLASS_HASH" \
+  --constructor-calldata "$OWNER_ADDRESS" \
   --url "$RPC_URL" 2>&1) || true
 
 echo "$DEPLOY_OUTPUT"
