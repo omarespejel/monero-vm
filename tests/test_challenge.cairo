@@ -110,11 +110,12 @@ fn default_proof(
     }
 }
 
-/// Helper to deploy challenge contract
+/// Helper to deploy challenge contract (bond_token=0 disables bonds for tests)
 fn deploy_challenge_contract() -> IChallengeContractDispatcher {
     let contract = declare("ChallengeContract").unwrap().contract_class();
     let owner: ContractAddress = 0x1.try_into().unwrap();
-    let (contract_address, _) = contract.deploy(@array![owner.into()]).unwrap();
+    let bond_token: ContractAddress = 0.try_into().unwrap();
+    let (contract_address, _) = contract.deploy(@array![owner.into(), bond_token.into()]).unwrap();
     IChallengeContractDispatcher { contract_address }
 }
 

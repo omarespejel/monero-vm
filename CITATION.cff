@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "MoneroVM: Optimistic RandomX Execution Verification via Fraud Proofs on Starknet"
+authors:
+  - family-names: "Espejel"
+    given-names: "Omar"
+    affiliation: "Starknet Foundation"
+date-released: "2025-12-04"
+url: "https://github.com/omarespejel/monero-vm"
+repository-code: "https://github.com/omarespejel/monero-vm"
+license: Apache-2.0
+keywords:
+  - monero
+  - starknet
+  - fraud-proofs
+  - randomx
+  - cairo
+  - bisection-protocol
+  - optimistic-verification
+abstract: >-
+  MoneroVM implements an optimistic fraud proof system for verifying
+  RandomX proof-of-work computations on Starknet. It uses a bisection
+  protocol with ERC20 bond enforcement to enable trustless Monero
+  block validation disputes. Part of the Monero-Starknet Atomic Swap
+  system.

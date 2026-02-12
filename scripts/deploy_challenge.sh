@@ -83,12 +83,15 @@ if [ -z "$OWNER_ADDRESS" ]; then
   fi
 fi
 
+# Bond token: 0 = disabled (testnet). Set BOND_TOKEN_ADDRESS for mainnet ERC20.
+BOND_TOKEN="${BOND_TOKEN_ADDRESS:-0}"
 echo "🚀 Deploying contract instance..."
 echo "   Owner: $OWNER_ADDRESS"
+echo "   Bond token: $BOND_TOKEN (0 = disabled)"
 
 DEPLOY_OUTPUT=$(sncast deploy \
   --class-hash "$CLASS_HASH" \
-  --constructor-calldata "$OWNER_ADDRESS" \
+  --constructor-calldata "$OWNER_ADDRESS" "$BOND_TOKEN" \
   --url "$RPC_URL" 2>&1) || true
 
 echo "$DEPLOY_OUTPUT"

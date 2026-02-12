@@ -2,19 +2,21 @@
 
 **Authors**: MoneroVM Development Team
 
-**Version**: 1.1 (February 2026)
+**Version**: 1.2 (February 2026)
 
-**Keywords**: Atomic Swaps, Privacy Cryptocurrencies, Zero-Knowledge Proofs, Fraud Proofs, RandomX, DLEQ, Cross-Chain Bridges
+**Keywords**: Atomic Swaps, Privacy Cryptocurrencies, Zero-Knowledge Proofs, Fraud Proofs, RandomX, DLEQ, Cross-Chain Bridges, Monero Interoperability
+
+**Target**: Monero Research Lab (MRL) Bulletin
 
 ---
 
 ## Abstract
 
-Cross-chain interoperability with privacy-preserving cryptocurrencies presents significant challenges due to transaction graph opacity and computationally intensive proof-of-work verification. Monero's combination of ring signatures, stealth addresses, and the ASIC-resistant RandomX algorithm creates unique barriers for trustless bridges to smart contract platforms. While trustless Bitcoin-Monero atomic swaps exist using adaptor signatures (COMIT Network, 2021), no prior work has extended these techniques to smart contract platforms with on-chain cryptographic verification.
+Monero's transaction graph opacity and ASIC-resistant RandomX proof-of-work create unique barriers for trustless bridges to smart contract platforms. While trustless Bitcoin-Monero atomic swaps exist (COMIT, 2021), they verify DLEQ proofs off-chain. No prior work has achieved on-chain DLEQ verification for Monero on any smart contract platform.
 
-We present MoneroVM, the first implementation of Monero atomic swaps on a smart contract platform, enabling trustless XMR ↔ Starknet token exchange with on-chain DLEQ proof verification. Our framework addresses two complementary problems: (1) trustless atomic swaps using Discrete Logarithm Equality (DLEQ) proofs verified on-chain via the Garaga cryptographic library, and (2) the first fraud-proof-based approach to Monero light client verification. For atomic swaps, we implement a two-party key generation protocol using the Serai DEX pattern, achieving trustless execution with a 3-hour timelock minimum, validated through 644 comprehensive tests.
+We present MoneroVM, the first implementation of Monero atomic swaps with on-chain DLEQ proof verification, enabling trustless XMR ↔ Starknet token exchange. Our framework addresses two complementary problems: (1) trustless atomic swaps using Discrete Logarithm Equality (DLEQ) proofs (MRL-0010 [21]) verified on-chain via the Garaga library, and (2) the first fraud-proof-based approach to Monero light client verification. For atomic swaps, we implement the Serai DEX two-party key generation pattern with a 3-hour timelock minimum, two-phase unlock (2h grace period) to mitigate the secret-revelation vs. Monero-finality race, and ReentrancyGuard. For fraud proofs, we implement ERC20 bond enforcement (challenger/defender stakes; winner receives both) and bisection to single-instruction verification.
 
-For scenarios requiring state verification without counterparty cooperation, we present the first comprehensive feasibility analysis of RandomX verification in zero-knowledge systems. We demonstrate that pure ZK proof generation for RandomX's 29-instruction virtual machine exceeds current ZK-STARK capabilities (~6.26 billion Sierra gas, ~$626/hash), establishing fraud proofs as the economically viable alternative. MoneroVM provides ~387K gas per instruction verification through optimistic verification with bisection-based dispute resolution. Our work extends the Monero interoperability landscape from peer-to-peer swaps to smart contract platforms, opening new possibilities for DeFi integration.
+We provide the first quantitative feasibility analysis of RandomX in zero-knowledge: pure ZK verification requires ~6.26 billion Sierra gas (~$626/hash), establishing fraud proofs as the economically viable path. MoneroVM achieves ~387K gas per instruction verification. Our work extends the Monero interoperability landscape from peer-to-peer swaps to smart contract platforms, opening new possibilities for DeFi integration.
 
 ---
 
@@ -24,41 +26,31 @@ For scenarios requiring state verification without counterparty cooperation, we 
 
 Cryptocurrency interoperability has matured significantly for transparent blockchains, with numerous bridges, atomic swap protocols, and cross-chain messaging systems in production. However, privacy-preserving cryptocurrencies like Monero present unique challenges that have resisted standard bridging approaches [1]. The opacity of transaction graphs, combined with sophisticated cryptographic constructions like ring signatures and stealth addresses, prevents the simple verification mechanisms that work for Bitcoin or Ethereum.
 
-**Prior Work on Monero Swaps**. The COMIT Network demonstrated the first trustless Bitcoin-Monero atomic swaps in 2021 [6], using adaptor signatures to achieve peer-to-peer exchange without trusted intermediaries. This approach leverages Bitcoin's simple scripting capabilities combined with DLEQ proofs across different elliptic curves (secp256k1 and ed25519). However, these swaps operate purely peer-to-peer without smart contract verification—the DLEQ proofs are verified off-chain by the counterparty, not on-chain by a contract.
+**Prior Work on Monero Swaps**. The COMIT Network demonstrated the first trustless Bitcoin-Monero atomic swaps in 2021 [6], using adaptor signatures to achieve peer-to-peer exchange without trusted intermediaries. This approach leverages Bitcoin's simple scripting capabilities combined with DLEQ proofs across different elliptic curves (secp256k1 and ed25519). The underlying DLEQ construction builds on Monero Research Lab (MRL) bulletin MRL-0010 [21], which describes discrete logarithm equality proofs across groups. However, COMIT and h4sh3d swaps operate purely peer-to-peer—DLEQ proofs are verified off-chain by the counterparty, not on-chain by a contract.
+
+**Monero Ecosystem Context**. Monero interoperability has evolved through community-funded work: h4sh3d's BTC-XMR swap protocol (CCS 2020), COMIT's production implementation (2021), and Serai DEX's audited two-party key generation. MRL bulletins MRL-0004, MRL-0005, and MRL-0006 address obfuscation, RingCT, and subaddresses—foundational to Monero's privacy model. Our work extends this ecosystem to smart contract platforms.
 
 **The Smart Contract Gap**. Extending Monero interoperability to smart contract platforms introduces new requirements. On-chain DLEQ verification enables richer swap mechanics: multi-party protocols, automated market makers, and contract-enforced timeouts. No prior work has achieved this for Monero. Additionally, Monero's proof-of-work algorithm RandomX compounds difficulties. Unlike SHA-256 or Ethash, RandomX executes randomized programs on a virtual machine, making verification computationally expensive and poorly suited for smart contract execution. Previous attempts at Monero bridges have relied on trusted federations or centralized exchanges, sacrificing the trustlessness that defines cryptocurrency's value proposition.
 
 ### 1.2 Why Monero is Particularly Difficult
 
-Monero presents three distinct challenges for trustless verification:
+Monero presents three distinct challenges for trustless verification. First, cryptographic privacy: ring signatures obscure the true sender among decoy outputs, while stealth addresses prevent linking transactions to recipients. Key images prevent double-spending but reveal no additional information. This design, while excellent for privacy, means that transaction validity cannot be verified by observing the blockchain—only by possessing specific private keys.
 
-**Cryptographic Privacy**. Ring signatures obscure the true sender among decoy outputs, while stealth addresses prevent linking transactions to recipients. Key images prevent double-spending but reveal no additional information. This design, while excellent for privacy, means that transaction validity cannot be verified by observing the blockchain—only by possessing specific private keys.
+Second, Monero's spend key architecture: one-time addresses are derived from both the sender's and recipient's keys. Spending requires knowledge of the private spend key, which must remain secret until the moment of spending. This creates challenges for atomic swap protocols where key revelation must be atomic with value transfer on another chain.
 
-**Spend Key Architecture**. Monero's one-time addresses are derived from both the sender's and recipient's keys. Spending requires knowledge of the private spend key, which must remain secret until the moment of spending. This creates challenges for atomic swap protocols where key revelation must be atomic with value transfer on another chain.
-
-**RandomX Proof-of-Work**. RandomX is designed to be ASIC-resistant through memory-hard, randomized computation. The algorithm executes 8 programs of 256 instructions each, operating on a 2MB scratchpad and 256MB cache. Each hash requires approximately 4.2 million VM operations, making verification orders of magnitude more expensive than SHA-256.
+Third, RandomX proof-of-work: the algorithm is designed to be ASIC-resistant through memory-hard, randomized computation. It executes 8 programs of 256 instructions each, operating on a 2MB scratchpad and 256MB cache. Each hash requires approximately 4.2 million VM operations, making verification orders of magnitude more expensive than SHA-256.
 
 ### 1.3 Our Approach: Two-Pronged Interoperability
 
-We address Monero-Starknet interoperability through two complementary mechanisms:
-
-1. **Atomic Swaps with DLEQ Proofs**: For normal operations where both parties are online and cooperative, we implement trustless token exchange using discrete logarithm equality proofs. The Serai DEX pattern enables two-party key generation where neither party can cheat, verified on-chain using the Garaga library for Ed25519 operations.
-
-2. **MoneroVM Fraud Proofs**: When atomic swap counterparties fail or disappear mid-protocol, MoneroVM provides trustless fund recovery through optimistic verification of RandomX execution. Rather than proving correctness of entire computations, we assume validity unless challenged, then resolve disputes through bisection to single-instruction verification.
+We address Monero-Starknet interoperability through two complementary mechanisms. For normal operations where both parties are online and cooperative, we implement trustless token exchange using discrete logarithm equality proofs. The Serai DEX pattern enables two-party key generation where neither party can cheat, verified on-chain using the Garaga library for Ed25519 operations. When atomic swap counterparties fail or disappear mid-protocol, MoneroVM provides trustless fund recovery through optimistic verification of RandomX execution. Rather than proving correctness of entire computations, we assume validity unless challenged, then resolve disputes through bisection to single-instruction verification.
 
 ### 1.4 Contributions
 
-This paper makes the following contributions:
+This paper makes several contributions. We present the first implementation of Monero atomic swaps on a smart contract platform, with on-chain DLEQ proof verification using the Garaga library for Ed25519 operations. Unlike prior BTC-XMR swaps where proofs are verified off-chain by counterparties, our implementation enables contract-enforced verification.
 
-- **First Monero Atomic Swaps on Smart Contracts**: The first implementation of Monero atomic swaps on a smart contract platform, with on-chain DLEQ proof verification using the Garaga library for Ed25519 operations. Unlike prior BTC-XMR swaps where proofs are verified off-chain by counterparties, our implementation enables contract-enforced verification.
+We introduce MoneroVM, the first fraud-proof-based system for verifying Monero block validity. This BitVM-inspired approach enables trustless dispute resolution through bisection to single-instruction verification, with ERC20 bond enforcement whereby challenger and defender post stakes and the winner receives both on resolution.
 
-- **First Fraud-Proof Approach to Monero Light Client Verification**: We introduce MoneroVM, the first fraud-proof-based system for verifying Monero block validity. This BitVM-inspired approach enables trustless dispute resolution through bisection to single-instruction verification.
-
-- **First Comprehensive RandomX ZK Feasibility Analysis**: Quantitative analysis demonstrating that pure ZK verification of RandomX requires ~6.26 billion Sierra gas (~$626/hash), establishing that fraud proofs are the only economically viable path for trustless Monero verification.
-
-- **Production Implementation**: 644+ tests covering all protocol paths, including comprehensive fraud proof tests with complete instruction-level verifiers for all 29 RandomX operations. This includes full IEEE-754 floating-point verification with witness-based proofs, memory instructions with Merkle verification, and CBRANCH with register modification tracking (15K-390K gas each).
-
-- **Security Hardening**: Remediation of critical vulnerabilities identified through rigorous audit, including hashlock computation bugs, sign extension errors, and reciprocal calculation fixes.
+We provide the first comprehensive quantitative analysis of RandomX in zero-knowledge, demonstrating that pure ZK verification requires approximately 6.26 billion Sierra gas (roughly \$626 per hash) and establishing fraud proofs as the only economically viable path for trustless Monero verification. Our production implementation includes 644+ tests covering all protocol paths, with complete instruction-level verifiers for all 29 RandomX operations—including full IEEE-754 floating-point verification with witness-based proofs, memory instructions with Merkle verification, and CBRANCH with register modification tracking. We have remediated critical vulnerabilities including hashlock computation (raw SHA256, no scalar reduction), IADD_RS sign extension, reciprocal calculation fixes, and E-group/eMask constraints. For the atomic swap, we implement two-phase unlock with a 2-hour grace period to mitigate the secret-revelation vs. Monero-finality race, and ReentrancyGuard to prevent reentrancy.
 
 ---
 
@@ -68,57 +60,25 @@ This paper makes the following contributions:
 
 Monero operates on the Ed25519 elliptic curve, using Curve25519 in Edwards form. The curve is defined over the prime field $\mathbb{F}_p$ where $p = 2^{255} - 19$, with base point $G$ of prime order $\ell = 2^{252} + 27742317777372353535851937790883648493$.
 
-**Key Pairs**. Each Monero wallet possesses two key pairs: a view key $(v, V = vG)$ and a spend key $(s, S = sG)$. The view key enables scanning the blockchain for incoming transactions, while the spend key authorizes outgoing transfers.
-
-**Stealth Addresses**. When Alice sends to Bob, she generates a one-time address $P = H_s(rV)G + S$ where $r$ is a random scalar and $R = rG$ is published with the transaction. Bob can detect the payment using his view key and spend the output using his spend key.
-
-**Ring Signatures**. To spend an output, the spender constructs a ring signature proving ownership of one output among a set of decoys. The key image $I = xH_p(P)$ prevents double-spending while preserving anonymity.
+Each Monero wallet possesses two key pairs: a view key $(v, V = vG)$ and a spend key $(s, S = sG)$. The view key enables scanning the blockchain for incoming transactions, while the spend key authorizes outgoing transfers. When Alice sends to Bob, she generates a one-time address $P = H_s(rV)G + S$ where $r$ is a random scalar and $R = rG$ is published with the transaction. Bob can detect the payment using his view key and spend the output using his spend key. To spend an output, the spender constructs a ring signature proving ownership of one output among a set of decoys. The key image $I = xH_p(P)$ prevents double-spending while preserving anonymity.
 
 ### 2.2 Starknet and Cairo
 
-Starknet is a validity rollup (ZK-rollup) that posts state differences to Ethereum with STARK proofs of computational integrity. Programs are written in Cairo, a language designed for provable computation.
-
-**Garaga Library**. We utilize the Garaga library [2] for Ed25519 curve operations on Starknet. Garaga provides efficient multi-scalar multiplication (MSM) using precomputed tables and batch verification, achieving ~50K gas for typical DLEQ verification.
-
-**Gas Model**. Starknet's gas model charges for Cairo VM execution steps, range checks, Poseidon hashes, and builtins. Our implementation targets ~100K gas for complete atomic swap verification and ~387K gas for fraud proof disputes.
+Starknet is a validity rollup (ZK-rollup) that posts state differences to Ethereum with STARK proofs of computational integrity. Programs are written in Cairo, a language designed for provable computation. We use the Garaga library [2] for Ed25519 curve operations on Starknet. Garaga provides efficient multi-scalar multiplication (MSM) using precomputed tables and batch verification, achieving approximately 50K gas for typical DLEQ verification. Starknet's gas model charges for Cairo VM execution steps, range checks, Poseidon hashes, and builtins. Our implementation targets approximately 100K gas for complete atomic swap verification and 387K gas for fraud proof disputes.
 
 ### 2.3 RandomX Architecture
 
 RandomX [3] is Monero's proof-of-work algorithm, designed for CPU optimization and ASIC resistance. Understanding its architecture is essential for both feasibility analysis and fraud proof design.
 
-**Virtual Machine**. RandomX executes programs on a custom VM with:
-- 8 integer registers (r0-r7): 64-bit unsigned values
-- 12 floating-point registers: 4 groups (F, E, A) of 4 128-bit SIMD values
-- 2MB scratchpad: L3 cache simulation
-- Program counter and iteration state
+RandomX executes programs on a custom virtual machine with eight integer registers (r0–r7) each holding 64-bit unsigned values, twelve floating-point registers organised into four groups (F, E, A) of four 128-bit SIMD values, a 2MB scratchpad simulating L3 cache, and program counter and iteration state. The VM supports 29 instruction types across several categories: integer arithmetic (IADD_R, ISUB_R, IMUL_R, IMULH_R, ISMULH_R, INEG_R, IXOR_R, IROR_R, IROL_R), integer operations with memory (IADD_M, ISUB_M, IMUL_M, IMULH_M, ISMULH_M, IXOR_M), integer special cases (IMUL_RCP, IADD_RS, ISWAP_R), memory store (ISTORE), floating-point (FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R), and control flow (CBRANCH, CFROUND).
 
-**Instruction Set**. The VM supports 29 instruction types across categories:
-- Integer arithmetic: IADD_R, ISUB_R, IMUL_R, IMULH_R, ISMULH_R, INEG_R, IXOR_R, IROR_R, IROL_R
-- Integer with memory: IADD_M, ISUB_M, IMUL_M, IMULH_M, ISMULH_M, IXOR_M
-- Integer special: IMUL_RCP, IADD_RS, ISWAP_R
-- Memory store: ISTORE
-- Floating-point: FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R
-- Control flow: CBRANCH, CFROUND
-
-**Execution Flow**. Each hash computation:
-1. Initializes scratchpad from cache using AesGenerator1R
-2. Executes 8 programs, each with 256 instructions over 2048 iterations
-3. Finalizes through AesHash1R and Blake2b-256
-
-**SuperscalarHash**. Programs are generated deterministically using SuperscalarHash, a program generator that schedules instructions across three execution ports while respecting data dependencies and latency constraints.
+Each hash computation initialises the scratchpad from cache using AesGenerator1R, executes eight programs of 256 instructions over 2048 iterations each, and finalises through AesHash1R and Blake2b-256. Programs are generated deterministically using SuperscalarHash, a program generator that schedules instructions across three execution ports while respecting data dependencies and latency constraints.
 
 ### 2.4 DLEQ Proofs
 
-A Discrete Logarithm Equality (DLEQ) proof demonstrates that two group elements share the same discrete logarithm with respect to different bases. Given generators $G$ and $H$, and points $A = xG$ and $B = xH$, the prover demonstrates knowledge of $x$ such that $\log_G(A) = \log_H(B)$ without revealing $x$.
+A Discrete Logarithm Equality (DLEQ) proof demonstrates that two group elements share the same discrete logarithm with respect to different bases. MRL-0010 [21] describes the cross-group DLEQ construction foundational to atomic swaps across curves (e.g., secp256k1 and ed25519). Given generators $G$ and $H$, and points $A = xG$ and $B = xH$, the prover demonstrates knowledge of $x$ such that $\log_G(A) = \log_H(B)$ without revealing $x$.
 
-**Schnorr-style Construction**. The proof consists of $(c, s)$ where:
-- Prover chooses random $k$, computes $R_1 = kG$, $R_2 = kH$
-- Challenge: $c = H(\text{context} \| G \| H \| A \| B \| R_1 \| R_2)$
-- Response: $s = k + cx$
-
-**Verification**. Verifier accepts if:
-- $sG = R_1 + cA$
-- $sH = R_2 + cB$
+In the Schnorr-style construction, the prover chooses random $k$, computes $R_1 = kG$ and $R_2 = kH$, derives the challenge $c = H(\text{context} \| G \| H \| A \| B \| R_1 \| R_2)$, and responds with $s = k + cx$. The verifier accepts if $sG = R_1 + cA$ and $sH = R_2 + cB$.
 
 ---
 
@@ -136,11 +96,7 @@ $$X = x_{\text{partial}}G + T$$
 
 where $T = tG$ is published with a DLEQ proof.
 
-**Security Property**. Neither party can spend the Monero output alone:
-- Alice knows $x_{\text{partial}}$ but not $t$
-- Bob knows $t$ but not $x_{\text{partial}}$
-
-Only when Bob reveals $t$ (to claim his STRK) can Alice compute $x = x_{\text{partial}} + t$ and spend the XMR.
+Neither party can spend the Monero output alone: Alice knows $x_{\text{partial}}$ but not $t$, and Bob knows $t$ but not $x_{\text{partial}}$. Only when Bob reveals $t$ (to claim his STRK) can Alice compute $x = x_{\text{partial}} + t$ and spend the XMR.
 
 ### 3.2 Protocol Flow
 
@@ -226,12 +182,18 @@ pub fn verify_dleq_proof(
 | EC addition | ~5K |
 | **Total verification** | **~50-100K** |
 
-### 3.4 Timelock Mechanics
+### 3.4 Timelock and Two-Phase Unlock
 
 **Timelock Parameters**:
 - Minimum lock time: 3 hours (allows for Monero confirmation depth)
-- Grace period: 2 hours (network latency buffer)
+- Grace period: 2 hours (separates secret revelation from token transfer)
 - Total swap timeout: 5 hours maximum
+
+**Two-Phase Unlock** (race condition mitigation):
+1. **Phase 1**: Bob calls `reveal_secret(secret)` → contract stores secret, `secret_revealed = true`; tokens are *not* transferred.
+2. **Phase 2**: After 2-hour grace period, Bob calls `claim_tokens()` → tokens transfer.
+
+This ensures Alice has time to observe the secret on-chain, recover the full spend key, and spend her Monero before Bob receives STRK. The 2h grace >> 20 min typical Monero finality (10 confirmations).
 
 **Monero Confirmation Considerations**:
 Monero's 2-minute block time and 10-confirmation standard requires ~20 minutes minimum. We use 3 hours to provide margin for:
@@ -356,6 +318,14 @@ fn sign_extend_32_to_64(val: u32) -> u64 {
 }
 ```
 
+#### 4.2.4 Secret-Revelation vs. Monero-Finality Race (Atomic Swap)
+
+A protocol-level race exists: Bob may reveal the secret on Starknet before Alice's Monero transaction confirms. A Monero reorg or failed transaction could leave Alice without funds or enable double-spend. The Monero network experienced an 18-block reorg (approximately 36 minutes) in September 2025. We mitigate this with a two-phase unlock: `reveal_secret()` stores state only, and `claim_tokens()` transfers after a grace period of 2 hours (7,200 seconds), allowing Monero 10-confirmation finality (approximately 20 minutes) plus margin. Off-chain `RaceConditionMonitor` and watchtower alerts handle grace-period expiry and unconfirmed Monero transactions. Reorgs exceeding two hours are extremely rare and not mitigated.
+
+#### 4.2.5 Bond Enforcement (Fraud Proofs)
+
+Challenge spam and griefing must be deterred while honest challengers must be compensated. When `bond_token` is set, the ChallengeContract requires a challenger bond of 0.1 ETH equivalent (ERC20) on `open_challenge`, a defender bond of 0.2 ETH equivalent on `defend`, and pays both bonds to the winner on resolution (`submit_proof` or `claim_timeout`). Bonds are optional (`bond_token = 0` disables for testnet); mainnet deployment uses ERC20 staking.
+
 ### 4.3 Audit Status
 
 | Component | Reviewer | Status |
@@ -371,15 +341,7 @@ fn sign_extend_32_to_64(val: u32) -> u64 {
 
 ### 5.1 Full ZK Cost Model
 
-We analyzed the feasibility of pure zero-knowledge verification of RandomX execution:
-
-**Execution Parameters**:
-- Programs per hash: 8
-- Instructions per program: 256
-- Iterations per program: 2048
-- Total operations: 8 × 256 × 2048 = 4,194,304
-
-**Per-Operation Costs** (Sierra gas):
+We analyzed the feasibility of pure zero-knowledge verification of RandomX execution. Each hash uses 8 programs of 256 instructions over 2048 iterations, yielding 8 × 256 × 2048 = 4,194,304 total operations. Per-operation costs in Sierra gas are as follows:
 | Component | Operations | Gas/Op | Total Gas |
 |-----------|------------|--------|-----------|
 | Cairo Steps | 50M | 100 | 5B |
@@ -389,22 +351,11 @@ We analyzed the feasibility of pure zero-knowledge verification of RandomX execu
 | Range Checks | 2M | 70 | 140M |
 | **TOTAL** | - | - | **~6.26B** |
 
-**Cost at Current Prices**:
-- ~6.26B Sierra gas ≈ 62,600 L2 gas units
-- At $0.01/unit ≈ **$626 per hash verification**
-- Prover time: 10-15 minutes per hash
+At current prices, approximately 6.26 billion Sierra gas corresponds to roughly 62,600 L2 gas units. At \$0.01 per unit this yields approximately \$626 per hash verification, with prover time of 10–15 minutes per hash.
 
 ### 5.2 Why Pure ZK Fails Economically
 
-The fundamental issue is the computational complexity of RandomX:
-
-1. **Cairo Step Dominance**: The 50M Cairo steps account for 80% of total cost. Each VM instruction requires ~12 Cairo steps average for arithmetic, register updates, and control flow.
-
-2. **Memory Authentication**: The 2MB scratchpad requires Merkle proof verification for every access. With 262,144 accesses across all iterations, memory proving alone consumes significant resources.
-
-3. **Floating-Point Complexity**: RandomX's IEEE-754 double-precision operations require ~500 gas each. While only ~360K FP operations occur per hash, they contribute 12% of total cost.
-
-**Comparison with Bitcoin**:
+The fundamental issue is the computational complexity of RandomX. The 50 million Cairo steps account for 80% of total cost; each VM instruction requires roughly 12 Cairo steps on average for arithmetic, register updates, and control flow. The 2MB scratchpad requires Merkle proof verification for every access, and with 262,144 accesses across all iterations, memory proving alone consumes significant resources. RandomX's IEEE-754 double-precision operations require approximately 500 gas each; although only roughly 360K FP operations occur per hash, they contribute 12% of total cost. For comparison with Bitcoin:
 | Algorithm | Operations/Hash | ZK Cost |
 |-----------|----------------|---------|
 | SHA-256 (Bitcoin) | ~80 rounds × 64 ops | ~50K gas |
@@ -716,18 +667,9 @@ pub struct BisectionState {
 }
 ```
 
-**Bisection Flow**:
-1. Challenger disputes claim with bond
-2. Defender responds with intermediate state at midpoint
-3. Challenger selects which half contains error
-4. Repeat until single instruction isolated (8 rounds for 256 instructions)
-5. Verifier checks single instruction execution
+The bisection flow proceeds as follows. The challenger disputes the claim, depositing an ERC20 bond if bond enforcement is enabled. The defender responds by depositing their bond and submitting intermediate state at the midpoint. The challenger selects which half contains the error, and the process repeats until a single instruction is isolated—eight rounds suffice for 256 instructions. The verifier then checks single-instruction execution, and the winner receives both bonds on resolution.
 
-**PRT Security**:
-Following Permissionless Refereed Tournament design [5]:
-- Any party can challenge, not just original counterparty
-- Multiple simultaneous challenges resolved independently
-- Bonds prevent spam while ensuring honest challengers can participate
+This design follows Permissionless Refereed Tournament (PRT) principles [5]: any party can challenge, not just the original counterparty; multiple simultaneous challenges are resolved independently; and bonds prevent spam while ensuring honest challengers can participate.
 
 ### 6.5 Gas Cost Analysis
 
@@ -753,6 +695,8 @@ Following Permissionless Refereed Tournament design [5]:
 | DLEQ verification gas | ~50-100K |
 | Total swap gas (happy path) | ~200K |
 | Timelock minimum | 3 hours |
+| Two-phase unlock grace period | 2 hours |
+| ReentrancyGuard | OpenZeppelin |
 | Rust test coverage | 136+ tests |
 | Cairo test coverage | 644 tests |
 | Security issues found | 3 (all fixed) |
@@ -766,6 +710,7 @@ Following Permissionless Refereed Tournament design [5]:
 | Rotation verification | ~335K gas |
 | State hash computation | ~403K gas |
 | Bisection rounds | 8 |
+| Bond enforcement | ERC20 (0.1 + 0.2 ETH equiv) |
 | Total dispute resolution | ~787K gas |
 
 ### 7.3 Comparison with Alternatives
@@ -797,35 +742,25 @@ Following Permissionless Refereed Tournament design [5]:
 
 ## 8. Related Work
 
-### 8.1 Monero Atomic Swaps
+### 8.1 Monero Research Lab (MRL) Bulletins
 
-**h4sh3d BTC/XMR Swaps** [6]: The first practical BTC-XMR atomic swap protocol, funded by Monero CCS in 2020. This work demonstrated trustless peer-to-peer exchange using adaptor signatures and DLEQ proofs across secp256k1 (Bitcoin) and ed25519 (Monero) curves. DLEQ proofs are verified off-chain by the counterparty. Our work extends this to smart contracts where DLEQ verification occurs on-chain, enabling contract-enforced mechanics.
+MRL-0010 [21] describes the Discrete Logarithm Equality proof across groups. This MRL bulletin presents the cryptographic construction foundational to cross-chain atomic swaps—proving knowledge of the same discrete logarithm in different prime-order groups (e.g., secp256k1 and ed25519) without revealing the value. Our on-chain DLEQ verification builds on this scheme, adapted for Ed25519-only verification in Cairo via Garaga. MRL bulletins MRL-0004, MRL-0005, and MRL-0006 address obfuscation, RingCT, and subaddresses—core to Monero's privacy model. Our design assumes canonical Monero address derivation and does not modify these primitives.
 
-**COMIT Network**: Production implementation of BTC/XMR swaps (August 2021), with automated maker discovery via libp2p. The swap is unidirectional (BTC→XMR only) due to Monero's lack of transaction pre-signing. Our work differs in (1) targeting Starknet rather than Bitcoin, (2) enabling bidirectional swaps through smart contract escrow, and (3) providing on-chain DLEQ verification.
+### 8.2 Monero Atomic Swaps
 
-**Serai DEX** [4]: Rust implementation of multi-asset DEX with Monero support. We adopt their audited two-party key generation pattern for secure key splitting.
+h4sh3d's BTC-XMR swap protocol [6], funded by Monero CCS in 2020, demonstrated the first practical trustless peer-to-peer exchange using adaptor signatures and DLEQ proofs across secp256k1 (Bitcoin) and ed25519 (Monero) curves. DLEQ proofs are verified off-chain by the counterparty. Our work extends this to smart contracts where DLEQ verification occurs on-chain, enabling contract-enforced mechanics. The COMIT Network provides a production implementation (August 2021) with automated maker discovery via libp2p; the swap is unidirectional (BTC→XMR only) due to Monero's lack of transaction pre-signing. Our work differs in targeting Starknet rather than Bitcoin, enabling bidirectional swaps through smart contract escrow, and providing on-chain DLEQ verification. Serai DEX [4] offers a Rust implementation of a multi-asset DEX with Monero support; we adopt their audited two-party key generation pattern for secure key splitting. Thorchain is a validator-based DEX supporting multiple chains but not currently Monero. It uses threshold signatures (TSS) requiring 2/3 validator consensus—trust-minimized but not trustless.
 
-**Thorchain**: Validator-based DEX supporting multiple chains but not currently Monero. Uses threshold signatures (TSS) requiring 2/3 validator consensus—trust-minimized but not trustless.
+### 8.3 Fraud Proof Systems
 
-### 8.2 Fraud Proof Systems
+BitVM [7] implements Bitcoin smart contracts through optimistic verification. Our MoneroVM adapts this pattern for RandomX instruction verification on Starknet's more expressive environment. Arbitrum and Optimism implement L2 scaling solutions using optimistic rollups with interactive fraud proofs; we use similar bisection protocols for dispute resolution, adapted for RandomX's instruction set. TrueBit [8] proposes a verification game for off-chain computation with economic security guarantees. Our PRT design follows similar tournament-style resolution for collusion resistance.
 
-**BitVM** [7]: Bitcoin smart contracts through optimistic verification. Our MoneroVM adapts this pattern for RandomX instruction verification on Starknet's more expressive environment.
+### 8.4 ZK Verification
 
-**Arbitrum/Optimism**: L2 scaling solutions using optimistic rollups with interactive fraud proofs. We use similar bisection protocols for dispute resolution, adapted for RandomX's instruction set.
+Raito [9] implements a trustless Bitcoin client for Starknet using STARK proofs for SHA-256 verification. RandomX's VM complexity—approximately 4.2 million operations per hash versus SHA-256's roughly 64 operations—prevents direct application of this approach. Our feasibility analysis uses the STWO Prover cost model to quantify why pure ZK is economically impractical for RandomX.
 
-**TrueBit** [8]: Verification game for off-chain computation with economic security guarantees. Our PRT design follows similar tournament-style resolution for collusion resistance.
+### 8.5 Monero Bridges (Non-Trustless)
 
-### 8.3 ZK Verification
-
-**Raito** [9]: Trustless Bitcoin client for Starknet using STARK proofs for SHA-256 verification. RandomX's VM complexity (~4.2M operations per hash vs. SHA-256's ~64 operations) prevents direct application of this approach.
-
-**STWO Prover**: Production STARK prover on Starknet. Our feasibility analysis uses STWO's cost model to quantify why pure ZK is economically impractical for RandomX.
-
-### 8.4 Monero Bridges (Non-Trustless)
-
-**GhostSwap/Rubic**: Non-custodial swap aggregators using liquidity providers and HTLCs. These services rely on maker liquidity rather than cryptographic trustlessness.
-
-**ZeroFi**: Proposed wrapped Monero (zXMR) using validator nodes for attestation. Trust-minimized but not fully trustless due to validator set requirements.
+GhostSwap and Rubic are non-custodial swap aggregators using liquidity providers and HTLCs. These services rely on maker liquidity rather than cryptographic trustlessness. ZeroFi proposes wrapped Monero (zXMR) using validator nodes for attestation. Trust-minimised but not fully trustless due to validator set requirements.
 
 ---
 
@@ -833,32 +768,17 @@ Following Permissionless Refereed Tournament design [5]:
 
 ### 9.1 Limitations
 
-**Floating-Point Instructions**: ✅ **COMPLETE** (February 2026). All 9 floating-point instructions (FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R, CFROUND) are now fully verified with witness-based IEEE-754 compliance. The implementation handles all special cases (NaN, infinity, zero, subnormals) deterministically and uses E-mask source validation to prevent manipulation. Approved by internal security review for testnet deployment.
+All nine floating-point instructions (FADD_R/M, FSUB_R/M, FMUL_R, FDIV_M, FSQRT_R, FSCAL_R, CFROUND) are now fully verified with witness-based IEEE-754 compliance as of February 2026. The implementation handles all special cases—NaN, infinity, zero, subnormals—deterministically and uses E-mask source validation to prevent manipulation. This has been approved by internal security review for testnet deployment. CBRANCH is fully integrated with register modification tracking: the verifier maintains per-register modification timestamps to correctly evaluate branch conditions based on when destination registers were last modified, matching the RandomX specification for conditional jump behavior.
 
-**Branch Prediction**: CBRANCH is fully integrated with register modification tracking. The verifier maintains per-register modification timestamps to correctly evaluate branch conditions based on when destination registers were last modified, matching the RandomX specification for conditional jump behavior.
-
-**Prover Decentralization**: Current design assumes honest provers submit attestations. Incentive mechanism for prover participation requires additional protocol design.
+The current design assumes honest provers submit attestations. An incentive mechanism for prover participation requires additional protocol design. Fraud proofs rely on economic security: challengers must be motivated to dispute, bonds must exceed challenge costs, and the challenge window must allow dispute initiation. These assumptions hold when swap values exceed costs and an honest majority monitors. The two-phase unlock with a 2-hour grace period mitigates the secret-revelation vs. Monero-finality race; reorgs exceeding two hours are not mitigated, and early mainnet deployment may limit swap size (e.g., under $100). Components are testnet-ready; mainnet deployment requires external audit by firms such as Trail of Bits, Nethermind, Zellic, or Starknet-specialized auditors.
 
 ### 9.2 Future Work
 
-1. **Complete Instruction Coverage**: ✅ **DONE** - All 29 RandomX instructions now have complete verifiers including all 9 FP instructions
-2. **Testnet Deployment**: ✅ **DONE** - ChallengeContract deployed to Starknet Sepolia ([0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea](https://sepolia.starkscan.co/contract/0x0797b10c13d9b47b7851ab95f48ebc8d80a8e77c4ec2cb0d0dd600e57a023cea))
-3. **Mainnet Deployment**: Deploy AtomicLock and ChallengeContract on Starknet mainnet
-4. **Wallet Integration**: Develop Monero wallet plugins for automated swap execution
-5. **Prover Network**: Design incentive mechanism for decentralized proof generation
-6. **Cross-Chain Extension**: Extend protocol to other privacy coins and L2s
+All 29 RandomX instructions now have complete verifiers including all nine FP instructions. ChallengeContract has been deployed to Starknet Sepolia. Remaining work includes mainnet deployment of AtomicLock and ChallengeContract, Monero wallet plugins for automated swap execution, an incentive mechanism for decentralized proof generation, and extension to other privacy coins and L2s.
 
 ### 9.3 Economic Considerations
 
-The fraud proof model introduces economic security assumptions:
-- Challengers must be economically motivated to dispute false claims
-- Challenge bonds must exceed expected challenge costs
-- Defenders must post sufficient collateral to cover potential disputes
-
-These assumptions hold when:
-- Swap values exceed challenge costs by significant margin
-- Honest majority of observers monitors for fraud
-- Challenge window provides sufficient time for dispute initiation
+The fraud proof model introduces economic security assumptions: challengers must be economically motivated to dispute false claims, challenge bonds must exceed expected challenge costs, and defenders must post sufficient collateral to cover potential disputes. These assumptions hold when swap values exceed challenge costs by a significant margin, an honest majority of observers monitors for fraud, and the challenge window provides sufficient time for dispute initiation.
 
 ---
 
@@ -917,6 +837,21 @@ Our work demonstrates that trustless interoperability with privacy-preserving cr
 [19] Starkware, "STWO Prover: Next-Generation ZK Prover," 2024. https://l2beat.com/zk-catalog/stwo
 
 [20] Optimism, "Optimistic Rollup Fraud Proofs," 2021. https://community.optimism.io/docs/protocol/
+
+[21] Monero Research Lab, "MRL-0010: Discrete Logarithm Equality Proof," December 2018. https://web.getmonero.org/resources/research-lab/pubs/MRL-0010.pdf
+
+[22] Monero Research Lab, "MRL-0004: Improving Obfuscation in the CryptoNote Protocol," 2015. https://www.getmonero.org/resources/research-lab/pubs/MRL-0004.pdf
+
+[23] Monero Research Lab, "MRL-0005: Ring Signature Confidential Transactions," 2015.
+
+[24] Monero Research Lab, "MRL-0006: Subaddresses," 2017.
+
+---
+
+
+## Submission Note (MRL)
+
+This document is prepared for Monero Research Lab (MRL) bulletin consideration. MRL contact: research@getmonero.org. Repository: https://github.com/monero-project/research-lab. LaTeX conversion recommended for formal submission.
 
 ---
 

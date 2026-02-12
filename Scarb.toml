@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024_07"
 # Cairo 2.11.4 - Compatible with Starknet 0.13.4 
 cairo-version = "2.11.4"
+license = "Apache-2.0"
+authors = ["Omar Espejel"]
+repository = "https://github.com/omarespejel/xmr-starknet-atomic-lock"
 
 [dependencies]
 starknet = "2.11.4"

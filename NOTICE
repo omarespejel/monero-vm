@@ -1,0 +1,66 @@
+MoneroVM — Optimistic RandomX Fraud Proofs on Starknet
+Copyright 2025-2026 Omar Espejel
+
+This product includes software developed by Omar Espejel
+(https://github.com/omarespejel).
+
+================================================================================
+ATTRIBUTION AND CITATION REQUIREMENT
+================================================================================
+
+Under Section 4(d) of the Apache License 2.0, any Derivative Works or
+projects that incorporate, adapt, or build upon this software MUST include
+the following attribution notice in a prominent location (README, documentation,
+or NOTICE file):
+
+  "This project uses code from MoneroVM by Omar Espejel,
+   available at https://github.com/omarespejel/monero-vm"
+
+Additionally, any academic paper, technical report, research publication, or
+formal documentation that describes systems derived from or based on this
+software MUST cite the following:
+
+  Espejel, O. (2025). "MoneroVM: Optimistic RandomX Execution Verification
+  via Fraud Proofs on Starknet."
+  https://github.com/omarespejel/monero-vm
+
+BibTeX:
+
+  @software{espejel2025monervm,
+    author       = {Espejel, Omar},
+    title        = {MoneroVM: Optimistic RandomX Execution Verification
+                    via Fraud Proofs on Starknet},
+    year         = {2025},
+    url          = {https://github.com/omarespejel/monero-vm}
+  }
+
+================================================================================
+COMPONENTS AND ORIGINAL CONTRIBUTIONS
+================================================================================
+
+The following components represent original contributions by the author:
+
+1. Bisection-based fraud proof protocol for RandomX execution disputes
+   - src/challenge.cairo
+
+2. ERC20 bond enforcement for fraud proof participation
+   - Challenger and defender bond staking via IERC20
+
+3. Optimistic execution model for RandomX proof-of-work verification
+   - Challenge/defend/bisect/prove protocol
+
+================================================================================
+THIRD-PARTY NOTICES
+================================================================================
+
+This software uses the following open-source libraries:
+
+- OpenZeppelin Cairo Contracts (https://github.com/OpenZeppelin/cairo-contracts) - MIT License
+- Starknet Foundry (https://github.com/foundry-rs/starknet-foundry) - MIT License
+
+================================================================================
+RELATED PROJECT
+================================================================================
+
+MoneroVM is part of the Monero-Starknet Atomic Swap system:
+https://github.com/omarespejel/monero-starknet-atomic-swap

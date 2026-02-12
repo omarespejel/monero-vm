@@ -2,8 +2,24 @@
 /// 
 /// Handles fraud proof disputes for RandomX verification.
 /// Inspired by BitVM and Arbitrum's optimistic verification patterns.
+/// 
+/// Bond enforcement: when bond_token is set, challengers and defenders must
+/// deposit ERC20 bonds. Winner receives both bonds on resolution.
 
 use starknet::ContractAddress;
+
+/// Minimal ERC20 interface for bond transfers.
+/// Uses OpenZeppelin-compatible signatures (audited).
+#[starknet::interface]
+pub trait IERC20<TContractState> {
+    fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
+    fn transfer_from(
+        ref self: TContractState,
+        sender: ContractAddress,
+        recipient: ContractAddress,
+        amount: u256,
+    ) -> bool;
+}
 
 // Re-export register types for InstructionProof struct
 pub use crate::randomx::fraud_proof::IntegerRegisters;
@@ -334,8 +350,8 @@ pub trait IChallengeContract<TContractState> {
 
 #[starknet::contract]
 pub mod ChallengeContract {
-    use super::{Challenge, ChallengeStatus, BisectionState, IChallengeContract};
-    use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
+    use super::{Challenge, ChallengeStatus, BisectionState, IChallengeContract, IERC20Dispatcher, IERC20DispatcherTrait};
+    use starknet::{ContractAddress, get_caller_address, get_block_timestamp, get_contract_address};
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess,
         StoragePointerReadAccess, StoragePointerWriteAccess
@@ -368,6 +384,8 @@ pub mod ChallengeContract {
         challenges: Map<u64, Challenge>,
         /// Owner address
         owner: ContractAddress,
+        /// Bond token (ERC20); 0 = disabled. When set, challenger/defender must deposit bonds.
+        bond_token: ContractAddress,
         /// Replay protection: maps claim_hash → active challenge_id
         /// Prevents duplicate challenges on the same claim
         active_challenges_for_claim: Map<felt252, u64>,
@@ -430,8 +448,9 @@ pub mod ChallengeContract {
     }
     
     #[constructor]
-    fn constructor(ref self: ContractState, owner: ContractAddress) {
+    fn constructor(ref self: ContractState, owner: ContractAddress, bond_token: ContractAddress) {
         self.owner.write(owner);
+        self.bond_token.write(bond_token);
         self.challenge_count.write(0);
     }
     
@@ -447,6 +466,14 @@ pub mod ChallengeContract {
         ) -> u64 {
             let caller = get_caller_address();
             let timestamp = get_block_timestamp();
+            
+            // Bond enforcement: pull challenger bond if bond_token is set
+            let bond_token = self.bond_token.read();
+            let zero_addr: ContractAddress = 0.try_into().unwrap();
+            if bond_token != zero_addr {
+                let token = IERC20Dispatcher { contract_address: bond_token };
+                let _ = token.transfer_from(caller, get_contract_address(), constants::CHALLENGER_BOND);
+            }
             
             // Compute claim hash for replay protection
             // A claim is uniquely identified by: defender + their claimed hash + trace root
@@ -524,6 +551,14 @@ pub mod ChallengeContract {
             // Verify challenge is open
             assert(challenge.status == ChallengeStatus::Open, 'Challenge not open');
             
+            // Bond enforcement: pull defender bond if bond_token is set
+            let bond_token = self.bond_token.read();
+            let zero_addr: ContractAddress = 0.try_into().unwrap();
+            if bond_token != zero_addr {
+                let token = IERC20Dispatcher { contract_address: bond_token };
+                let _ = token.transfer_from(caller, get_contract_address(), constants::DEFENDER_BOND);
+            }
+            
             // Update challenge status
             challenge.status = ChallengeStatus::Bisecting;
             challenge.defender_bond = constants::DEFENDER_BOND;
@@ -579,9 +614,11 @@ pub mod ChallengeContract {
             if is_challenger {
                 challenge.bisection.challenger_midpoint = midpoint_state_hash;
                 challenge.bisection.challenger_submitted = true;
+                challenge.bisection.challenger_turn = false;  // Defender's turn next
             } else {
                 challenge.bisection.defender_midpoint = midpoint_state_hash;
                 challenge.bisection.defender_submitted = true;
+                challenge.bisection.challenger_turn = true;  // Challenger's turn next
             }
             
             challenge.last_action_at = timestamp;
@@ -685,6 +722,10 @@ pub mod ChallengeContract {
             };
             challenge.last_action_at = timestamp;
             
+            // Bond payout: transfer total bonds to winner
+            let bond_token = self.bond_token.read();
+            ChallengeContractInternal::pay_bonds_to_winner(ref self, bond_token, winner, challenge.challenger_bond, challenge.defender_bond);
+            
             // Emit event
             self.emit(ChallengeResolved {
                 challenge_id,
@@ -737,6 +778,10 @@ pub mod ChallengeContract {
             challenge.status = ChallengeStatus::TimedOut;
             challenge.last_action_at = timestamp;
             
+            // Bond payout: transfer total bonds to winner
+            let bond_token = self.bond_token.read();
+            ChallengeContractInternal::pay_bonds_to_winner(ref self, bond_token, winner, challenge.challenger_bond, challenge.defender_bond);
+            
             // Emit event
             self.emit(ChallengeResolved {
                 challenge_id,
@@ -754,6 +799,37 @@ pub mod ChallengeContract {
         
         fn get_challenge_count(self: @ContractState) -> u64 {
             self.challenge_count.read()
+        }
+    }
+    
+    /// Internal trait for helper functions (not exposed in ABI)
+    trait ChallengeContractInternalTrait<TContractState> {
+        fn pay_bonds_to_winner(
+            ref self: TContractState,
+            bond_token: ContractAddress,
+            winner: ContractAddress,
+            challenger_bond: u256,
+            defender_bond: u256,
+        );
+    }
+    
+    impl ChallengeContractInternal of ChallengeContractInternalTrait<ContractState> {
+        fn pay_bonds_to_winner(
+            ref self: ContractState,
+            bond_token: ContractAddress,
+            winner: ContractAddress,
+            challenger_bond: u256,
+            defender_bond: u256,
+        ) {
+            let zero_addr: ContractAddress = 0.try_into().unwrap();
+            if bond_token == zero_addr {
+                return;
+            }
+            let (total, overflow) = core::integer::u256_overflowing_add(challenger_bond, defender_bond);
+            assert(!overflow, 'Bond overflow');
+            let token = IERC20Dispatcher { contract_address: bond_token };
+            let ok = token.transfer(winner, total);
+            assert(ok, 'Bond transfer failed');
         }
     }
     

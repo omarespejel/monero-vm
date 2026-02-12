@@ -9,7 +9,7 @@ for the MoneroVM Cairo implementation.
 
 | Finding | Severity | Status |
 |---------|----------|--------|
-| Missing Bond Enforcement (ERC20) | HIGH | Planned Phase 2 |
+| Missing Bond Enforcement (ERC20) | HIGH | **IMPLEMENTED** ✅ |
 | Bisection Logic Simplification | MEDIUM-HIGH | Planned Phase 2 |
 | **Event Emission Order** | LOW | **FIXED** ✅ |
 | **Opcode Validation Gap (15-17)** | MEDIUM | **FIXED** ✅ |
@@ -17,10 +17,11 @@ for the MoneroVM Cairo implementation.
 | **FP IEEE-754 Verification** | HIGH | **COMPLETE** ✅ |
 
 **Key Fixes Applied**:
-1. **Opcode Validation**: Extended valid range to include all 29 opcodes
-2. **Event Order**: Moved `emit(BisectionMove)` after `challenges.write()` for state consistency
-3. **FP Verifiers**: All 9 floating-point instructions with IEEE-754 compliance
-4. **E-mask Validation**: Entropy source verification prevents manipulation
+1. **Bond Enforcement (ERC20)**: Constructor accepts `bond_token` (ContractAddress). When non-zero: `open_challenge` pulls `CHALLENGER_BOND` via `transfer_from`; `defend` pulls `DEFENDER_BOND`. On resolution (`submit_proof` or `claim_timeout`), winner receives both bonds via `transfer`. See `challenge.cairo`.
+2. **Opcode Validation**: Extended valid range to include all 29 opcodes
+3. **Event Order**: Moved `emit(BisectionMove)` after `challenges.write()` for state consistency
+4. **FP Verifiers**: All 9 floating-point instructions with IEEE-754 compliance
+5. **E-mask Validation**: Entropy source verification prevents manipulation
 
 ### Component Status
 
