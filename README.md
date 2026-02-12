@@ -3,8 +3,17 @@
 **Trustless Monero verification on Starknet via fraud proofs.**
 
 [![Tests](https://img.shields.io/badge/tests-644%20passing-brightgreen)]()
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Network](https://img.shields.io/badge/network-Sepolia%20Testnet-orange)]()
+
+> **License: Apache 2.0 — Attribution and citation required.**
+> If you use, fork, or build upon this code, you **must** include the [LICENSE](LICENSE) and [NOTICE](NOTICE) files and cite this project. Academic publications and derivative works **must** include the citation below. See [NOTICE](NOTICE) for full terms.
+>
+> ```
+> Espejel, O. (2025). "MoneroVM: Optimistic RandomX Execution Verification
+> via Fraud Proofs on Starknet."
+> https://github.com/omarespejel/monero-vm
+> ```
 
 ---
 
